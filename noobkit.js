@@ -1,6 +1,8 @@
-// noobkit.js v5 (stable, anchored builder anatomy)
-// IMPORTANT: load with a URL ending in .js (no ?v=)
-// IDs are pg_* so they won't conflict with other mods.
+// noobkit.js v6 (Builder Anatomy Pack)
+// - Build-friendly anchored blocks (WALL) + falling chunks
+// - Acid-safe: stomach, muscle, intestines do NOT get dissolved
+// - Gastric acid decays over time + stomach renews it without flooding
+// IDs are pg_* to avoid conflicts.
 
 (function (main) {
   if (typeof runAfterLoad === "function") runAfterLoad(main);
@@ -12,8 +14,7 @@
       console.error("[pg_noobkit] elements/behaviors not ready");
       return;
     }
-
-    console.log("[pg_noobkit] loaded v5");
+    console.log("[pg_noobkit] loaded v6");
 
     // ---------- helpers ----------
     function inBounds(x, y) {
@@ -35,6 +36,13 @@
       if (typeof changePixel === "function") changePixel(pixel, elem);
       else pixel.element = elem;
     }
+    function safeDeleteAt(x, y) {
+      if (typeof deletePixel === "function") {
+        deletePixel(x, y);
+        return true;
+      }
+      return false;
+    }
     function chance(p) { return Math.random() < p; }
 
     const CAT = "anatomy";
@@ -42,7 +50,7 @@
     const STEAM = elements.steam ? "steam" : null;
     const METHANE = elements.methane ? "methane" : null;
 
-    // ---------- obvious proof it loaded ----------
+    // ---------- proof marker ----------
     elements.pg_loaded_marker = {
       color: "#ff00ff",
       behavior: behaviors.WALL,
@@ -51,7 +59,7 @@
       density: 9999,
     };
 
-    // ---------- base references ----------
+    // ---------- base refs ----------
     const BLOOD = elements.blood ? "blood" : "pg_blood";
     if (!elements[BLOOD]) {
       elements.pg_blood = {
@@ -155,43 +163,17 @@
       }
     };
 
-    elements.pg_gastric_acid = {
-      color: ["#c9ff3b", "#a8f000", "#d7ff6a"],
-      behavior: behaviors.LIQUID,
-      category: "liquids",
-      state: "liquid",
-      density: 1040,
-      viscosity: 9000,
-      stain: 0.10,
-      reactions: {
-        water: { elem1: "pg_diluted_acid", elem2: "pg_diluted_acid", chance: 0.55 },
-        pg_saliva: { elem1: "pg_diluted_acid", elem2: "pg_diluted_acid", chance: 0.55 },
-        pg_mucus: { elem1: "pg_diluted_acid", elem2: "pg_diluted_acid", chance: 0.55 },
-        pg_csf: { elem1: "pg_diluted_acid", elem2: "pg_diluted_acid", chance: 0.55 },
-      }
-    };
-
-    elements.pg_diluted_acid = {
-      color: ["#dfff80", "#cfff6a", "#e9ffb0"],
-      behavior: behaviors.LIQUID,
-      category: "liquids",
-      state: "liquid",
-      density: 1020,
-      viscosity: 7000,
-      stain: 0.06,
-    };
-
-    // ---------- block+chunk builder ----------
+    // ---------- block+chunk maker ----------
     function makeBlockAndChunk(baseId, blockDef, chunkDef) {
       elements[baseId + "_block"] = Object.assign({
-        behavior: behaviors.WALL,          // anchored (won't fall)
+        behavior: behaviors.WALL,     // anchored for building
         category: CAT,
         state: "solid",
         breakInto: baseId + "_chunk",
       }, blockDef);
 
       elements[baseId + "_chunk"] = Object.assign({
-        behavior: behaviors.STURDYPOWDER,  // falls when cut/destroyed
+        behavior: behaviors.STURDYPOWDER, // falls after cutting/damage
         category: CAT,
         state: "solid",
       }, chunkDef);
@@ -207,6 +189,7 @@
       density: 1100,
     });
 
+    // MUSCLE (acid-proof by reaction edits later)
     makeBlockAndChunk("pg_muscle", {
       color: ["#b54545", "#c85a5a", "#9c2f2f"],
       density: 1150,
@@ -344,6 +327,7 @@
       density: 1140,
     });
 
+    // INTESTINE (acid-proof by reaction edits later)
     makeBlockAndChunk("pg_intestine", {
       color: ["#caa07b", "#d5b08b", "#b88962"],
       density: 1120,
@@ -362,25 +346,57 @@
       density: 1100,
     });
 
-    // stomach as separate id (block/chunk but custom name)
+    // STOMACH (acid-proof) — custom ids
     elements.pg_stomach_block = {
       color: ["#c07a68", "#b56c5a", "#d18a79"],
       behavior: behaviors.WALL,
       category: CAT,
       state: "solid",
       density: 1100,
-      hardness: 0.18,
+      hardness: 0.22,
       breakInto: "pg_stomach_chunk",
       tick: function (pixel) {
-        if (chance(0.006)) {
-          const dirs = [[0,1],[1,0],[-1,0],[0,-1]];
-          for (const d of dirs) {
-            const nx = pixel.x + d[0], ny = pixel.y + d[1];
-            if (empty(nx, ny)) { safeCreate("pg_gastric_acid", nx, ny); break; }
+        // Maintain a SMALL amount of acid near stomach, without flooding.
+        // Count gastric acid in a small radius:
+        let acidCount = 0;
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            const x = pixel.x + dx, y = pixel.y + dy;
+            if (!inBounds(x, y)) continue;
+            if (!empty(x, y) && pixelMap && pixelMap[x] && pixelMap[x][y]) {
+              const e = pixelMap[x][y].element;
+              if (e === "pg_gastric_acid") acidCount++;
+            }
           }
+        }
+
+        // If too much acid around, neutralize ONE nearby acid pixel
+        if (acidCount > 6 && chance(0.35)) {
+          for (let i = 0; i < 12; i++) {
+            const nx = pixel.x + ((Math.random() * 5) | 0) - 2;
+            const ny = pixel.y + ((Math.random() * 5) | 0) - 2;
+            if (!inBounds(nx, ny)) continue;
+            if (!empty(nx, ny) && pixelMap && pixelMap[nx] && pixelMap[nx][ny]) {
+              const p = pixelMap[nx][ny];
+              if (p && p.element === "pg_gastric_acid") {
+                safeChange(p, "pg_diluted_acid");
+                break;
+              }
+            }
+          }
+        }
+
+        // If low acid around, slowly "renew" by creating 1 acid in an adjacent empty tile
+        // (very low rate to prevent filling)
+        if (acidCount < 2 && chance(0.025)) {
+          const dirs = [[0,1],[1,0],[-1,0],[0,-1]];
+          const pick = dirs[(Math.random() * dirs.length) | 0];
+          const nx = pixel.x + pick[0], ny = pixel.y + pick[1];
+          if (empty(nx, ny)) safeCreate("pg_gastric_acid", nx, ny);
         }
       }
     };
+
     elements.pg_stomach_chunk = {
       color: ["#c07a68", "#b56c5a", "#d18a79"],
       behavior: behaviors.STURDYPOWDER,
@@ -389,43 +405,133 @@
       density: 1080,
     };
 
-    // ---------- acid dissolving rules ----------
-    // chunks dissolve faster, blocks convert to chunks
-    const dissolveFast = {
-      pg_skin_chunk: 1, pg_muscle_chunk: 1, pg_fat_chunk: 1,
-      pg_cartilage_chunk: 1, pg_tendon_chunk: 1, pg_nerve_chunk: 1,
-      pg_brain_chunk: 1, pg_heart_chunk: 1, pg_lung_chunk: 1,
-      pg_liver_chunk: 1, pg_kidney_chunk: 1, pg_intestine_chunk: 1,
-      pg_stomach_chunk: 1,
-    };
-    const dissolveSlow = {
-      pg_skin_block: "pg_skin_chunk",
-      pg_muscle_block: "pg_muscle_chunk",
-      pg_fat_block: "pg_fat_chunk",
-      pg_cartilage_block: "pg_cartilage_chunk",
-      pg_tendon_block: "pg_tendon_chunk",
-      pg_nerve_block: "pg_nerve_chunk",
-      pg_brain_block: "pg_brain_chunk",
-      pg_heart_block: "pg_heart_chunk",
-      pg_lung_block: "pg_lung_chunk",
-      pg_liver_block: "pg_liver_chunk",
-      pg_kidney_block: "pg_kidney_chunk",
-      pg_intestine_block: "pg_intestine_chunk",
-      pg_stomach_block: "pg_stomach_chunk",
+    // ---------- gastric acid (decays + does NOT dissolve muscle/intestine/stomach) ----------
+    elements.pg_gastric_acid = {
+      color: ["#c9ff3b", "#a8f000", "#d7ff6a"],
+      behavior: behaviors.LIQUID,
+      category: "liquids",
+      state: "liquid",
+      density: 1040,
+      viscosity: 9000,
+      stain: 0.10,
+      tick: function (pixel) {
+        // Age-based decay: acid -> diluted -> disappears
+        pixel._pgAge = (pixel._pgAge || 0) + 1;
+
+        // First stage: becomes diluted after a while
+        if (pixel._pgAge > 900 && chance(0.15)) {
+          safeChange(pixel, "pg_diluted_acid");
+          pixel._pgAge = 0;
+          return;
+        }
+        // If it's *very* old, it just vanishes (prevents flooding)
+        if (pixel._pgAge > 1600 && chance(0.25)) {
+          if (!safeDeleteAt(pixel.x, pixel.y)) {
+            // fallback if deletePixel isn't available
+            safeChange(pixel, "pg_diluted_acid");
+          }
+          return;
+        }
+      },
+      reactions: {
+        // dilution sources
+        water:      { elem1: "pg_diluted_acid", elem2: "pg_diluted_acid", chance: 0.55 },
+        pg_saliva:  { elem1: "pg_diluted_acid", elem2: "pg_diluted_acid", chance: 0.55 },
+        pg_mucus:   { elem1: "pg_diluted_acid", elem2: "pg_diluted_acid", chance: 0.55 },
+        pg_csf:     { elem1: "pg_diluted_acid", elem2: "pg_diluted_acid", chance: 0.55 },
+
+        // dissolves MOST soft tissues (NOT muscle/intestine/stomach per your request)
+        pg_skin_chunk:      { elem1: "pg_gastric_acid", elem2: "pg_slurry", chance: 0.25 },
+        pg_fat_chunk:       { elem1: "pg_gastric_acid", elem2: "pg_slurry", chance: 0.22 },
+        pg_cartilage_chunk: { elem1: "pg_gastric_acid", elem2: "pg_slurry", chance: 0.16 },
+        pg_tendon_chunk:    { elem1: "pg_gastric_acid", elem2: "pg_slurry", chance: 0.16 },
+        pg_nerve_chunk:     { elem1: "pg_gastric_acid", elem2: "pg_slurry", chance: 0.18 },
+        pg_brain_chunk:     { elem1: "pg_gastric_acid", elem2: "pg_slurry", chance: 0.22 },
+        pg_heart_chunk:     { elem1: "pg_gastric_acid", elem2: "pg_slurry", chance: 0.18 },
+        pg_lung_chunk:      { elem1: "pg_gastric_acid", elem2: "pg_slurry", chance: 0.18 },
+        pg_liver_chunk:     { elem1: "pg_gastric_acid", elem2: "pg_slurry", chance: 0.18 },
+        pg_kidney_chunk:    { elem1: "pg_gastric_acid", elem2: "pg_slurry", chance: 0.18 },
+
+        // blocks slowly become chunks for most things (NOT muscle/intestine/stomach)
+        pg_skin_block:      { elem1: "pg_gastric_acid", elem2: "pg_skin_chunk", chance: 0.08 },
+        pg_fat_block:       { elem1: "pg_gastric_acid", elem2: "pg_fat_chunk", chance: 0.08 },
+        pg_cartilage_block: { elem1: "pg_gastric_acid", elem2: "pg_cartilage_chunk", chance: 0.06 },
+        pg_tendon_block:    { elem1: "pg_gastric_acid", elem2: "pg_tendon_chunk", chance: 0.06 },
+        pg_nerve_block:     { elem1: "pg_gastric_acid", elem2: "pg_nerve_chunk", chance: 0.06 },
+        pg_brain_block:     { elem1: "pg_gastric_acid", elem2: "pg_brain_chunk", chance: 0.08 },
+        pg_heart_block:     { elem1: "pg_gastric_acid", elem2: "pg_heart_chunk", chance: 0.07 },
+        pg_lung_block:      { elem1: "pg_gastric_acid", elem2: "pg_lung_chunk", chance: 0.07 },
+        pg_liver_block:     { elem1: "pg_gastric_acid", elem2: "pg_liver_chunk", chance: 0.07 },
+        pg_kidney_block:    { elem1: "pg_gastric_acid", elem2: "pg_kidney_chunk", chance: 0.07 },
+      }
     };
 
-    if (!elements.pg_gastric_acid.reactions) elements.pg_gastric_acid.reactions = {};
-    for (const k in dissolveFast) {
-      elements.pg_gastric_acid.reactions[k] = { elem1: "pg_gastric_acid", elem2: "pg_slurry", chance: 0.28 };
-    }
-    for (const k in dissolveSlow) {
-      elements.pg_gastric_acid.reactions[k] = { elem1: "pg_gastric_acid", elem2: dissolveSlow[k], chance: 0.10 };
-    }
+    elements.pg_diluted_acid = {
+      color: ["#dfff80", "#cfff6a", "#e9ffb0"],
+      behavior: behaviors.LIQUID,
+      category: "liquids",
+      state: "liquid",
+      density: 1020,
+      viscosity: 7000,
+      stain: 0.06,
+      tick: function (pixel) {
+        // diluted acid also fades away (slower)
+        pixel._pgAge = (pixel._pgAge || 0) + 1;
+        if (pixel._pgAge > 2200 && chance(0.20)) {
+          if (!safeDeleteAt(pixel.x, pixel.y)) {
+            // fallback: turn into water if it exists
+            if (elements.water) safeChange(pixel, "water");
+          }
+        }
+      }
+    };
 
-    // bile breaks fat (better for destruction)
+    // ---------- extra: bile breaks fat (good for destruction) ----------
     if (!elements.pg_bile.reactions) elements.pg_bile.reactions = {};
     elements.pg_bile.reactions.pg_fat_block = { elem1: "pg_bile", elem2: "pg_slurry", chance: 0.18 };
     elements.pg_bile.reactions.pg_fat_chunk = { elem1: "pg_bile", elem2: "pg_slurry", chance: 0.25 };
+
+    // ---------- IMPORTANT: make muscle/intestine/stomach acid-proof (remove any accidental reactions) ----------
+    // If anything else later adds these reactions, we delete them here.
+    if (elements.pg_gastric_acid && elements.pg_gastric_acid.reactions) {
+      delete elements.pg_gastric_acid.reactions.pg_muscle_block;
+      delete elements.pg_gastric_acid.reactions.pg_muscle_chunk;
+      delete elements.pg_gastric_acid.reactions.pg_intestine_block;
+      delete elements.pg_gastric_acid.reactions.pg_intestine_chunk;
+      delete elements.pg_gastric_acid.reactions.pg_stomach_block;
+      delete elements.pg_gastric_acid.reactions.pg_stomach_chunk;
+    }
+    if (elements.pg_diluted_acid && elements.pg_diluted_acid.reactions) {
+      delete elements.pg_diluted_acid.reactions.pg_muscle_block;
+      delete elements.pg_diluted_acid.reactions.pg_muscle_chunk;
+      delete elements.pg_diluted_acid.reactions.pg_intestine_block;
+      delete elements.pg_diluted_acid.reactions.pg_intestine_chunk;
+      delete elements.pg_diluted_acid.reactions.pg_stomach_block;
+      delete elements.pg_diluted_acid.reactions.pg_stomach_chunk;
+    }
+
+    // Optional: touching these parts neutralizes acid a bit (prevents buildup)
+    function addNeutralizeOn(elemName) {
+      if (!elements[elemName]) return;
+      if (!elements[elemName].reactions) elements[elemName].reactions = {};
+      elements[elemName].reactions.pg_gastric_acid = { elem1: elemName, elem2: "pg_diluted_acid", chance: 0.25 };
+    }
+    addNeutralizeOn("pg_muscle_block");
+    addNeutralizeOn("pg_muscle_chunk");
+    addNeutralizeOn("pg_intestine_block");
+    addNeutralizeOn("pg_intestine_chunk");
+    addNeutralizeOn("pg_stomach_block");
+    addNeutralizeOn("pg_stomach_chunk");
+
+    // Also protect from BASE GAME acid if it exists
+    if (elements.acid && elements.acid.reactions) {
+      delete elements.acid.reactions.pg_muscle_block;
+      delete elements.acid.reactions.pg_muscle_chunk;
+      delete elements.acid.reactions.pg_intestine_block;
+      delete elements.acid.reactions.pg_intestine_chunk;
+      delete elements.acid.reactions.pg_stomach_block;
+      delete elements.acid.reactions.pg_stomach_chunk;
+    }
 
     // ---------- bacteria / rot ----------
     elements.pg_bacteria = {
@@ -434,6 +540,7 @@
       category: CAT,
       state: "solid",
       density: 900,
+      reactions: {}
     };
 
     elements.pg_rotten_tissue = {
@@ -457,19 +564,14 @@
       stain: 0.07,
     };
 
-    // bacteria reactions (rots blocks)
-    elements.pg_bacteria.reactions = {
-      pg_skin_block:      { elem1: "pg_bacteria", elem2: "pg_rotten_tissue", chance: 0.08 },
-      pg_muscle_block:    { elem1: "pg_bacteria", elem2: "pg_rotten_tissue", chance: 0.10 },
-      pg_fat_block:       { elem1: "pg_bacteria", elem2: "pg_rotten_tissue", chance: 0.07 },
-      pg_brain_block:     { elem1: "pg_bacteria", elem2: "pg_rotten_tissue", chance: 0.12 },
-      pg_heart_block:     { elem1: "pg_bacteria", elem2: "pg_rotten_tissue", chance: 0.10 },
-      pg_lung_block:      { elem1: "pg_bacteria", elem2: "pg_rotten_tissue", chance: 0.09 },
-      pg_liver_block:     { elem1: "pg_bacteria", elem2: "pg_rotten_tissue", chance: 0.09 },
-      pg_kidney_block:    { elem1: "pg_bacteria", elem2: "pg_rotten_tissue", chance: 0.09 },
-      pg_intestine_block: { elem1: "pg_bacteria", elem2: "pg_rotten_tissue", chance: 0.12 },
-      pg_stomach_block:   { elem1: "pg_bacteria", elem2: "pg_rotten_tissue", chance: 0.10 },
-    };
+    // rot blocks
+    const rotTargets = [
+      "pg_skin_block","pg_muscle_block","pg_fat_block","pg_brain_block","pg_heart_block","pg_lung_block",
+      "pg_liver_block","pg_kidney_block","pg_intestine_block","pg_stomach_block"
+    ];
+    for (const t of rotTargets) {
+      if (elements[t]) elements.pg_bacteria.reactions[t] = { elem1: "pg_bacteria", elem2: "pg_rotten_tissue", chance: 0.08 };
+    }
     elements.pg_bacteria.reactions[BLOOD] = { elem1: "pg_bacteria", elem2: "pg_pus", chance: 0.08 };
 
     // ---------- tools ----------
@@ -478,8 +580,6 @@
       category: "tools",
       tool: function (pixel) {
         const e = pixel.element;
-
-        // convert *_block -> *_chunk
         if (typeof e === "string" && e.endsWith("_block")) {
           const chunk = e.replace("_block", "_chunk");
           if (elements[chunk]) {
@@ -504,7 +604,7 @@
       }
     };
 
-    // ---------- seeds (clean, no weird spacing) ----------
+    // ---------- seeds ----------
     function buildFromTemplate(cx, cy, template, legend) {
       const h = template.length, w = template[0].length;
       const x0 = cx - ((w / 2) | 0);
@@ -521,13 +621,12 @@
       }
     }
 
-    // 15 wide, simple and symmetric
     const HUMAN = [
       ".....SSSSS.....",
       "....SMMMMMS....",
-      "...SMMBBBMM S...",
-      "...SMMBBBMM S...",
-      "...SMMMMMMM S...",
+      "...SMMBBBMM....",
+      "...SMMBBBMM....",
+      "...SMMMMMMM....",
       "....SMMMMMS....",
       ".....SSSSS.....",
       ".....SMMMS.....",
@@ -535,14 +634,14 @@
       "..SMMMLLMMMMS..",
       "..SMMMLLMMMMS..",
       "..SMMMMVMMMMS..",
-      "..SMMMKKKMMM S..",
-      "..SMMMIIIMMM S..",
-      "...SMMMGMMM S...",
-      "...SMMMMMMM S...",
+      "..SMMMKKKMMMMS..",
+      "..SMMMIIIMMMMS..",
+      "...SMMMGMMMMS...",
+      "...SMMMMMMMMS...",
       "....SMMMMMS....",
       ".....SMMMS.....",
       "......S.S......"
-    ].map(r => r.replace(/ /g, ".")); // safe: only turns spaces into dots
+    ];
 
     const MANNEQUIN = [
       ".....SSSSS.....",
