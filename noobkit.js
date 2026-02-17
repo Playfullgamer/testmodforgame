@@ -1,24 +1,19 @@
-// anatomy_pack.js (fixed loader)
-// Adds anatomy fluids/tissues + Human/Animal seeds.
-// Search "anatomy_test" to confirm it loaded.
+// noobkit.js (Playfullgamer anatomy pack)
+// Unique ids: pg_* so it won't conflict with other mods.
 
 (function (main) {
-  if (typeof runAfterLoad === "function") {
-    runAfterLoad(main);
-  } else if (document.readyState === "complete") {
-    main();
-  } else {
-    window.addEventListener("load", main);
-  }
+  if (typeof runAfterLoad === "function") runAfterLoad(main);
+  else if (document.readyState === "complete") main();
+  else window.addEventListener("load", main);
 })(function () {
   if (typeof elements === "undefined" || typeof behaviors === "undefined") {
-    console.error("[Anatomy Pack] elements/behaviors not ready, mod didn't load properly.");
+    console.error("[pg_noobkit] elements/behaviors not ready");
     return;
   }
 
-  console.log("[Anatomy Pack] Loaded OK");
+  console.log("[pg_noobkit] loaded OK");
 
-  // ---------- Helpers ----------
+  // ----- helpers -----
   function inBounds(x, y) {
     return !(typeof outOfBounds === "function" && outOfBounds(x, y));
   }
@@ -27,9 +22,9 @@
   }
   function safeCreate(elem, x, y) {
     if (!inBounds(x, y)) return false;
+    if (!elements[elem]) return false;
     if (typeof createPixel !== "function") return false;
     if (!empty(x, y)) return false;
-    if (!elements[elem]) return false;
     createPixel(elem, x, y);
     return true;
   }
@@ -38,32 +33,26 @@
     if (typeof changePixel === "function") changePixel(pixel, elem);
     else pixel.element = elem;
   }
-  function randChance(p) {
-    return Math.random() < p;
-  }
+  function chance(p) { return Math.random() < p; }
 
-  // ---------- Category ----------
-  const CAT = "anatomy";
-
-  // Sanity check element (use this to confirm the mod is working)
-  elements.anatomy_test = {
+  // ----- sanity test element -----
+  elements.pg_test_powder = {
     color: "#00ffcc",
     behavior: behaviors.POWDER,
-    category: CAT,
+    category: "anatomy",   // new category (auto appears)
     state: "solid",
-    density: 1200,
+    density: 1500,
   };
 
-  // Prefer base-game elements if they exist; otherwise create our own.
-  const BLOOD = elements.blood ? "blood" : "anatomy_blood";
-  const BONE  = elements.bone  ? "bone"  : "anatomy_bone";
+  // ----- base references -----
+  const BLOOD = elements.blood ? "blood" : "pg_blood";
+  const BONE  = elements.bone  ? "bone"  : "pg_bone";
   const ASH   = elements.ash   ? "ash"   : null;
   const STEAM = elements.steam ? "steam" : null;
-  const METHANE = elements.methane ? "methane" : null;
 
-  // ---------- Fallback basics (only if missing) ----------
+  // fallback blood/bone if base game doesn't have them
   if (!elements[BLOOD]) {
-    elements[BLOOD] = {
+    elements.pg_blood = {
       color: ["#b3001b", "#8f0015", "#cc0020"],
       behavior: behaviors.LIQUID,
       category: "liquids",
@@ -77,18 +66,18 @@
   }
 
   if (!elements[BONE]) {
-    elements[BONE] = {
+    elements.pg_bone = {
       color: ["#e9e2d1", "#d8cfbb", "#f2ead8"],
       behavior: behaviors.WALL,
       category: "solids",
       state: "solid",
       density: 1900,
       hardness: 0.7,
-      breakInto: "anatomy_bone_dust",
+      breakInto: "pg_bone_dust",
       tempHigh: 900,
       stateHigh: ASH || "ash",
     };
-    elements.anatomy_bone_dust = {
+    elements.pg_bone_dust = {
       color: ["#e8e0cf", "#d8cfbb"],
       behavior: behaviors.POWDER,
       category: "powders",
@@ -97,210 +86,172 @@
     };
   }
 
-  // ---------- Fluids ----------
-  elements.brain_fluid = {
+  // ----- fluids (put into liquids category so they're easy to find) -----
+  elements.pg_brain_fluid = {
     color: ["#d9f2ff", "#c7ecff", "#e8fbff"],
     behavior: behaviors.LIQUID,
-    category: CAT,
+    category: "liquids",
     state: "liquid",
     density: 1010,
     viscosity: 12000,
     stain: 0.03,
     tempHigh: 105,
     stateHigh: STEAM || "steam",
-    reactions: {
-      stomach_acid: { elem1: "brain_fluid", elem2: "diluted_stomach_acid", chance: 0.35 },
-    }
   };
 
-  elements.stomach_acid = {
+  elements.pg_stomach_acid = {
     color: ["#c9ff3b", "#a8f000", "#d7ff6a"],
     behavior: behaviors.LIQUID,
-    category: CAT,
+    category: "liquids",
     state: "liquid",
     density: 1040,
     viscosity: 9000,
     stain: 0.10,
     reactions: {
-      water: { elem1: "diluted_stomach_acid", elem2: "diluted_stomach_acid", chance: 0.45 },
-      brain_fluid: { elem1: "diluted_stomach_acid", elem2: "diluted_stomach_acid", chance: 0.45 },
-      skin: { elem1: "stomach_acid", elem2: "digested_slurry", chance: 0.25 },
-      muscle_tissue: { elem1: "stomach_acid", elem2: "digested_slurry", chance: 0.25 },
-      organ_flesh: { elem1: "stomach_acid", elem2: "digested_slurry", chance: 0.25 },
-      brain_flesh: { elem1: "stomach_acid", elem2: "digested_slurry", chance: 0.30 },
-      heart: { elem1: "stomach_acid", elem2: "digested_slurry", chance: 0.25 },
-      stomach: { elem1: "stomach_acid", elem2: "digested_slurry", chance: 0.20 },
-      brain: { elem1: "stomach_acid", elem2: "digested_slurry", chance: 0.25 },
+      // dissolves your anatomy stuff:
+      pg_skin:         { elem1: "pg_stomach_acid", elem2: "pg_digested_slurry", chance: 0.25 },
+      pg_muscle:       { elem1: "pg_stomach_acid", elem2: "pg_digested_slurry", chance: 0.25 },
+      pg_organ_flesh:  { elem1: "pg_stomach_acid", elem2: "pg_digested_slurry", chance: 0.25 },
+      pg_brain_flesh:  { elem1: "pg_stomach_acid", elem2: "pg_digested_slurry", chance: 0.30 },
+      pg_heart:        { elem1: "pg_stomach_acid", elem2: "pg_digested_slurry", chance: 0.25 },
+      pg_brain:        { elem1: "pg_stomach_acid", elem2: "pg_digested_slurry", chance: 0.25 },
+      pg_stomach:      { elem1: "pg_stomach_acid", elem2: "pg_digested_slurry", chance: 0.20 },
+      // gets weaker with water/brain fluid
+      water:           { elem1: "pg_diluted_acid", elem2: "pg_diluted_acid", chance: 0.5 },
+      pg_brain_fluid:  { elem1: "pg_diluted_acid", elem2: "pg_diluted_acid", chance: 0.5 },
     }
   };
 
-  elements.diluted_stomach_acid = {
+  elements.pg_diluted_acid = {
     color: ["#dfff80", "#cfff6a", "#e9ffb0"],
     behavior: behaviors.LIQUID,
-    category: CAT,
+    category: "liquids",
     state: "liquid",
     density: 1020,
     viscosity: 7000,
     stain: 0.06,
     reactions: {
-      skin: { elem1: "diluted_stomach_acid", elem2: "digested_slurry", chance: 0.10 },
-      muscle_tissue: { elem1: "diluted_stomach_acid", elem2: "digested_slurry", chance: 0.10 },
-      organ_flesh: { elem1: "diluted_stomach_acid", elem2: "digested_slurry", chance: 0.10 },
-      brain_flesh: { elem1: "diluted_stomach_acid", elem2: "digested_slurry", chance: 0.12 },
+      pg_skin:        { elem1: "pg_diluted_acid", elem2: "pg_digested_slurry", chance: 0.10 },
+      pg_muscle:      { elem1: "pg_diluted_acid", elem2: "pg_digested_slurry", chance: 0.10 },
+      pg_organ_flesh: { elem1: "pg_diluted_acid", elem2: "pg_digested_slurry", chance: 0.10 },
+      pg_brain_flesh: { elem1: "pg_diluted_acid", elem2: "pg_digested_slurry", chance: 0.12 },
     }
   };
 
-  elements.digested_slurry = {
+  elements.pg_digested_slurry = {
     color: ["#6b4b2a", "#845a34", "#5c3f22"],
     behavior: behaviors.LIQUID,
-    category: CAT,
+    category: "liquids",
     state: "liquid",
     density: 1150,
     viscosity: 25000,
     stain: 0.12,
-    tick: function (pixel) {
-      if (pixel.temp > 25 && METHANE && randChance(0.0015)) {
-        safeCreate(METHANE, pixel.x + (Math.random() < 0.5 ? -1 : 1), pixel.y - 1);
-      }
-    }
   };
 
-  // ---------- Tissues / Organs ----------
-  elements.organ_flesh = {
-    color: ["#c96b6b", "#b85b5b", "#d77c7c"],
-    behavior: behaviors.STURDYPOWDER,
-    category: CAT,
-    state: "solid",
-    density: 1080,
-    burn: 8,
-    burnTime: 120,
-    burnInto: ASH || "ash",
-    tempHigh: 90,
-    stateHigh: "cooked_tissue",
-  };
-
-  elements.brain_flesh = {
-    color: ["#b3a2ad", "#c3b1bc", "#9a8a95"],
-    behavior: behaviors.STURDYPOWDER,
-    category: CAT,
-    state: "solid",
-    density: 1040,
-    burn: 7,
-    burnTime: 110,
-    burnInto: ASH || "ash",
-    tempHigh: 80,
-    stateHigh: "cooked_tissue",
-    reactions: {
-      stomach_acid: { elem1: "digested_slurry", elem2: "stomach_acid", chance: 0.20 },
-      diluted_stomach_acid: { elem1: "digested_slurry", elem2: "diluted_stomach_acid", chance: 0.10 },
-    }
-  };
-
-  elements.skin = {
+  // ----- tissues/organs (new category anatomy so they group together) -----
+  elements.pg_skin = {
     color: ["#f2c6a7", "#e8b996", "#d9a785"],
     behavior: behaviors.STURDYPOWDER,
-    category: CAT,
+    category: "anatomy",
     state: "solid",
     density: 1120,
     burn: 6,
     burnTime: 160,
     burnInto: ASH || "ash",
     tempHigh: 120,
-    stateHigh: "cooked_tissue",
+    stateHigh: ASH || "ash",
   };
 
-  elements.muscle_tissue = {
+  elements.pg_muscle = {
     color: ["#b54545", "#c85a5a", "#9c2f2f"],
     behavior: behaviors.STURDYPOWDER,
-    category: CAT,
+    category: "anatomy",
     state: "solid",
     density: 1150,
     burn: 7,
     burnTime: 140,
     burnInto: ASH || "ash",
     tempHigh: 110,
-    stateHigh: "cooked_tissue",
-  };
-
-  elements.cooked_tissue = {
-    color: ["#7a4a2b", "#8a5a3b", "#6a3a1b"],
-    behavior: behaviors.STURDYPOWDER,
-    category: CAT,
-    state: "solid",
-    density: 1200,
-    burn: 5,
-    burnTime: 80,
-    burnInto: ASH || "ash",
-    tempHigh: 250,
     stateHigh: ASH || "ash",
   };
 
-  elements.brain = {
+  elements.pg_organ_flesh = {
+    color: ["#c96b6b", "#b85b5b", "#d77c7c"],
+    behavior: behaviors.STURDYPOWDER,
+    category: "anatomy",
+    state: "solid",
+    density: 1080,
+    burn: 8,
+    burnTime: 120,
+    burnInto: ASH || "ash",
+    tempHigh: 90,
+    stateHigh: ASH || "ash",
+  };
+
+  elements.pg_brain_flesh = {
+    color: ["#b3a2ad", "#c3b1bc", "#9a8a95"],
+    behavior: behaviors.STURDYPOWDER,
+    category: "anatomy",
+    state: "solid",
+    density: 1040,
+    burn: 7,
+    burnTime: 110,
+    burnInto: ASH || "ash",
+    tempHigh: 80,
+    stateHigh: ASH || "ash",
+  };
+
+  elements.pg_brain = {
     color: ["#a99aa6", "#bdb0ba", "#948793"],
     behavior: behaviors.WALL,
-    category: CAT,
+    category: "anatomy",
     state: "solid",
     density: 1060,
     hardness: 0.15,
-    burn: 6,
-    burnTime: 120,
-    burnInto: ASH || "ash",
     tempHigh: 85,
-    stateHigh: "cooked_tissue",
+    stateHigh: "pg_brain_flesh",
     tick: function (pixel) {
-      if (randChance(0.01)) {
-        const spots = [[0, 1], [1, 0], [-1, 0], [0, -1]];
-        for (const [dx, dy] of spots) {
-          if (empty(pixel.x + dx, pixel.y + dy)) {
-            safeCreate("brain_fluid", pixel.x + dx, pixel.y + dy);
-            break;
-          }
+      // leaks brain fluid a bit if exposed
+      if (chance(0.01)) {
+        const dirs = [[0,1],[1,0],[-1,0],[0,-1]];
+        for (const [dx,dy] of dirs) {
+          const nx = pixel.x + dx, ny = pixel.y + dy;
+          if (empty(nx, ny)) { safeCreate("pg_brain_fluid", nx, ny); break; }
         }
       }
     }
   };
 
-  elements.stomach = {
+  elements.pg_stomach = {
     color: ["#c07a68", "#b56c5a", "#d18a79"],
     behavior: behaviors.WALL,
-    category: CAT,
+    category: "anatomy",
     state: "solid",
     density: 1100,
     hardness: 0.18,
-    burn: 6,
-    burnTime: 160,
-    burnInto: ASH || "ash",
-    tempHigh: 95,
-    stateHigh: "cooked_tissue",
     tick: function (pixel) {
-      if (randChance(0.006)) {
-        const dirs = [[0, 1], [1, 0], [-1, 0], [0, -1]];
-        for (const [dx, dy] of dirs) {
+      // slow acid leak
+      if (chance(0.006)) {
+        const dirs = [[0,1],[1,0],[-1,0],[0,-1]];
+        for (const [dx,dy] of dirs) {
           const nx = pixel.x + dx, ny = pixel.y + dy;
-          if (empty(nx, ny)) {
-            safeCreate("stomach_acid", nx, ny);
-            break;
-          }
+          if (empty(nx, ny)) { safeCreate("pg_stomach_acid", nx, ny); break; }
         }
       }
     }
   };
 
-  elements.heart = {
+  elements.pg_heart = {
     color: ["#8c0f1f", "#a31226", "#6e0b17"],
     behavior: behaviors.WALL,
-    category: CAT,
+    category: "anatomy",
     state: "solid",
     density: 1120,
     hardness: 0.22,
-    burn: 7,
-    burnTime: 140,
-    burnInto: ASH || "ash",
-    tempHigh: 110,
-    stateHigh: "cooked_tissue",
     tick: function (pixel) {
-      if (randChance(0.03)) {
-        const dirs = [[0, 1], [1, 0], [-1, 0], [0, -1]];
+      // pumps blood
+      if (chance(0.03)) {
+        const dirs = [[0,1],[1,0],[-1,0],[0,-1]];
         const pick = dirs[(Math.random() * dirs.length) | 0];
         const nx = pixel.x + pick[0], ny = pixel.y + pick[1];
         if (empty(nx, ny)) safeCreate(BLOOD, nx, ny);
@@ -308,44 +259,45 @@
     }
   };
 
-  // ---------- Tool ----------
-  elements.anatomy_scalpel = {
+  // ----- tool (existing tools category) -----
+  elements.pg_scalpel = {
     color: "#d9d9d9",
     category: "tools",
     tool: function (pixel) {
       const e = pixel.element;
 
-      if (e === "stomach") {
-        safeCreate("stomach_acid", pixel.x, pixel.y + 1);
-        safeCreate("stomach_acid", pixel.x + 1, pixel.y);
-        safeCreate("digested_slurry", pixel.x - 1, pixel.y);
-        safeChange(pixel, "organ_flesh");
+      if (e === "pg_stomach") {
+        safeCreate("pg_stomach_acid", pixel.x, pixel.y + 1);
+        safeCreate("pg_stomach_acid", pixel.x + 1, pixel.y);
+        safeChange(pixel, "pg_organ_flesh");
         return;
       }
-      if (e === "brain") {
-        safeCreate("brain_fluid", pixel.x, pixel.y + 1);
-        safeCreate("brain_fluid", pixel.x + 1, pixel.y);
-        safeCreate("brain_fluid", pixel.x - 1, pixel.y);
-        safeChange(pixel, "brain_flesh");
+
+      if (e === "pg_brain") {
+        safeCreate("pg_brain_fluid", pixel.x, pixel.y + 1);
+        safeCreate("pg_brain_fluid", pixel.x + 1, pixel.y);
+        safeCreate("pg_brain_fluid", pixel.x - 1, pixel.y);
+        safeChange(pixel, "pg_brain_flesh");
         return;
       }
-      if (e === "heart") {
+
+      if (e === "pg_heart") {
         safeCreate(BLOOD, pixel.x, pixel.y + 1);
         safeCreate(BLOOD, pixel.x + 1, pixel.y);
         safeCreate(BLOOD, pixel.x - 1, pixel.y);
-        safeChange(pixel, "organ_flesh");
+        safeChange(pixel, "pg_organ_flesh");
         return;
       }
-      if (e === "skin" || e === "muscle_tissue" || e === "organ_flesh" || e === "brain_flesh") {
-        if (randChance(0.35)) safeCreate(BLOOD, pixel.x + (Math.random() < 0.5 ? -1 : 1), pixel.y);
+
+      if (e === "pg_skin" || e === "pg_muscle" || e === "pg_organ_flesh" || e === "pg_brain_flesh") {
+        if (chance(0.35)) safeCreate(BLOOD, pixel.x + (Math.random() < 0.5 ? -1 : 1), pixel.y);
       }
     }
   };
 
-  // ---------- Seeds (auto-build simple bodies) ----------
+  // ----- seeds (build simple body) -----
   function buildFromTemplate(cx, cy, template, legend) {
-    const h = template.length;
-    const w = template[0].length;
+    const h = template.length, w = template[0].length;
     const x0 = cx - ((w / 2) | 0);
     const y0 = cy - ((h / 2) | 0);
 
@@ -376,20 +328,10 @@
     "..S...S.."
   ];
 
-  const ANIMAL_TEMPLATE = [
-    "..SSSSS..",
-    ".SMMMMMS.",
-    ".SMBOMMS.",
-    ".SMMHMM.S",
-    "..SMGMS..",
-    "...S.S...",
-    "..S...S.."
-  ];
-
-  elements.anatomy_human_seed = {
+  elements.pg_human_seed = {
     color: ["#222222", "#444444"],
     behavior: behaviors.STURDYPOWDER,
-    category: CAT,
+    category: "anatomy",
     state: "solid",
     density: 1600,
     tick: function (pixel) {
@@ -397,49 +339,16 @@
       pixel._built = true;
 
       const legend = {
-        "S": "skin",
-        "M": "muscle_tissue",
+        "S": "pg_skin",
+        "M": "pg_muscle",
         "O": BONE,
-        "B": "brain",
-        "H": "heart",
-        "G": "stomach",
+        "B": "pg_brain",
+        "H": "pg_heart",
+        "G": "pg_stomach",
       };
 
       buildFromTemplate(pixel.x, pixel.y, HUMAN_TEMPLATE, legend);
-      safeChange(pixel, "skin");
+      safeChange(pixel, "pg_skin");
     }
   };
-
-  elements.anatomy_animal_seed = {
-    color: ["#1a1a1a", "#3a3a3a"],
-    behavior: behaviors.STURDYPOWDER,
-    category: CAT,
-    state: "solid",
-    density: 1600,
-    tick: function (pixel) {
-      if (pixel._built) return;
-      pixel._built = true;
-
-      const legend = {
-        "S": "skin",
-        "M": "muscle_tissue",
-        "O": BONE,
-        "B": "brain",
-        "H": "heart",
-        "G": "stomach",
-      };
-
-      buildFromTemplate(pixel.x, pixel.y, ANIMAL_TEMPLATE, legend);
-      safeChange(pixel, "skin");
-    }
-  };
-
-  // Make base acid interact with new tissues (if acid exists)
-  if (elements.acid) {
-    if (!elements.acid.reactions) elements.acid.reactions = {};
-    elements.acid.reactions.brain_flesh = { elem1: "acid", elem2: "digested_slurry", chance: 0.18 };
-    elements.acid.reactions.organ_flesh = { elem1: "acid", elem2: "digested_slurry", chance: 0.14 };
-    elements.acid.reactions.muscle_tissue = { elem1: "acid", elem2: "digested_slurry", chance: 0.14 };
-    elements.acid.reactions.skin = { elem1: "acid", elem2: "digested_slurry", chance: 0.12 };
-  }
 });
