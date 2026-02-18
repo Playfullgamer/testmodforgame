@@ -1,32 +1,37 @@
-// sbx_pixel_sidebar_overhaul.js
-// Pixel Sidebar Overhaul: left element bar w/ scroll + search + categories + pixel-style UI + QoL
-
+// sbx_neo_full_ui_overhaul.js
+// Neo Fullscreen UI Overhaul: modernized top controls + clear open buttons + full-height drawers
 (() => {
   "use strict";
 
   const MOD = {
-    name: "Pixel Sidebar Overhaul",
-    version: "1.0.0",
+    name: "Neo Full UI Overhaul",
+    version: "3.0.0",
     keys: {
-      settings: "sbx_pso/settings",
-      favorites: "sbx_pso/favorites",
-      recents: "sbx_pso/recents",
-      sidebarOpen: "sbx_pso/sidebar_open",
+      settings: "sbx_neo3/settings",
+      favs: "sbx_neo3/favs",
+      recents: "sbx_neo3/recents",
+      openElements: "sbx_neo3/open_elements",
+      openOverhaul: "sbx_neo3/open_overhaul",
+      widthElements: "sbx_neo3/w_elements",
+      widthOverhaul: "sbx_neo3/w_overhaul",
+      maxElements: "sbx_neo3/max_elements",
+      maxOverhaul: "sbx_neo3/max_overhaul",
+      tab: "sbx_neo3/tab",
+      cat: "sbx_neo3/cat",
     },
     defaults: {
+      enable: true,
+
       // UI
-      enableSidebar: true,
+      restyleTopUI: true,
       hideVanillaElementUI: true,
-      sidebarOpenByDefault: true,
-      showFavorites: true,
-      showRecents: true,
+      openElementsOnStart: true,
+      showPreview: true,
       showTooltips: true,
+      autoCloseOnPick: false,
 
       // QoL
-      hotkeys: true,        // / or Ctrl+K search, Q swap last, Alt+1..9 favs, Shift+1..9 recents
-      altWheelBrush: true,  // Alt+mousewheel changes brush size (if supported by game)
-      altMiddlePick: true,  // Alt+MiddleClick canvas to pick element under cursor
-      altClickInspect: true,// Alt+Click canvas to inspect pixel
+      hotkeys: true, // B toggle elements, O toggle overhaul, / search, Ctrl+K search, Q swap last
       toasts: true,
 
       // Tweaks/perf (safe-ish)
@@ -41,9 +46,7 @@
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
   function safeParse(s, fallback) { try { return JSON.parse(s); } catch { return fallback; } }
-  function loadSettings() {
-    return { ...MOD.defaults, ...(safeParse(localStorage.getItem(MOD.keys.settings) || "{}", {})) };
-  }
+  function loadSettings() { return { ...MOD.defaults, ...(safeParse(localStorage.getItem(MOD.keys.settings) || "{}", {})) }; }
   function saveSettings(s) { localStorage.setItem(MOD.keys.settings, JSON.stringify(s)); }
 
   function loadList(key) {
@@ -51,8 +54,7 @@
     return Array.isArray(arr) ? arr.filter(Boolean) : [];
   }
   function saveList(key, arr, cap) {
-    const out = (cap ? arr.slice(0, cap) : arr);
-    localStorage.setItem(key, JSON.stringify(out));
+    localStorage.setItem(key, JSON.stringify(cap ? arr.slice(0, cap) : arr));
   }
 
   function el(tag, attrs = {}, ...children) {
@@ -95,341 +97,446 @@
     });
   }
 
-  // ---------- Visual style (pixel/bevel to match Sandboxels)
-  function cssPixel() {
+  // ---------- cleanup old stacks (prevents double UI)
+  function cleanupOld() {
+    [
+      "psoStyle","psoSidebar","psoOverlay","psoHamburger","psoSettings","psoTip","psoToast","psoInspect",
+      "sbxOHStyle","sbxOHBar","sbxOHPanel","sbxOHTooltip","sbxOHToast",
+      "neo3Style","neo3Overlay","neo3Elements","neo3Overhaul","neo3EdgeL","neo3EdgeR","neo3Toast","neo3Tip"
+    ].forEach(id => $(`#${id}`)?.remove());
+    document.body.classList.remove("sbx-pso","sbx-ohp","sbx-neo","sbx-neo3");
+  }
+
+  // ---------- UI style
+  function cssNeo() {
+    const wE = clamp(parseInt(localStorage.getItem(MOD.keys.widthElements) || "520", 10) || 520, 320, 860);
+    const wO = clamp(parseInt(localStorage.getItem(MOD.keys.widthOverhaul) || "520", 10) || 520, 320, 860);
     return `
-/* ===== Pixel Sidebar Overhaul (scoped) ===== */
-body.sbx-pso{
-  --pso-bg: rgba(10,10,10,.88);
-  --pso-panel: rgba(20,20,20,.92);
-  --pso-border: rgba(255,255,255,.18);
-  --pso-border2: rgba(255,255,255,.10);
-  --pso-text: rgba(255,255,255,.92);
-  --pso-muted: rgba(255,255,255,.65);
-  --pso-shadow: 0 10px 24px rgba(0,0,0,.55);
-  --pso-top: 54px;
-  --pso-w: 300px;
+body.sbx-neo3{
+  --neo-top: 78px;
+  --neo-w-e: ${wE}px;
+  --neo-w-o: ${wO}px;
+
+  --neo-bg: rgba(12,14,18,.92);
+  --neo-panel: rgba(18,21,28,.92);
+  --neo-panel2: rgba(14,16,22,.92);
+
+  --neo-border: rgba(255,255,255,.12);
+  --neo-border2: rgba(255,255,255,.08);
+
+  --neo-text: rgba(255,255,255,.92);
+  --neo-muted: rgba(255,255,255,.62);
+
+  --neo-accent: rgba(76,201,240,.90);
+  --neo-accent2: rgba(167,139,250,.85);
+
+  --neo-radius: 16px;
+  --neo-shadow: 0 16px 48px rgba(0,0,0,.55);
+  --neo-shadow2: 0 10px 30px rgba(0,0,0,.45);
 }
 
-/* Optional: hide vanilla category+element rows */
-body.sbx-pso.pso-hide-vanilla #categoryControls,
-body.sbx-pso.pso-hide-vanilla #elementControls{
+body.sbx-neo3.neo-hide-vanilla #categoryControls,
+body.sbx-neo3.neo-hide-vanilla #elementControls{
   display:none !important;
 }
 
-/* Hamburger button fits in the top pixel UI (uses game's controlButton class) */
-#psoHamburger.controlButton{
-  min-width: 44px;
-  padding-left: 12px !important;
-  padding-right: 12px !important;
-  font-weight: 700;
+/* ===== Top UI restyle (the “new GUI thingies”) ===== */
+body.sbx-neo3.neo-topstyle #toolControls .controlButton,
+body.sbx-neo3.neo-topstyle #controls .controlButton{
+  border-radius: 14px !important;
+  border: 1px solid var(--neo-border2) !important;
+  background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04)) !important;
+  color: var(--neo-text) !important;
+  box-shadow: 0 6px 16px rgba(0,0,0,.25);
+  transition: transform .06s ease, filter .12s ease;
+}
+body.sbx-neo3.neo-topstyle #toolControls .controlButton:hover,
+body.sbx-neo3.neo-topstyle #controls .controlButton:hover{ filter: brightness(1.08); }
+body.sbx-neo3.neo-topstyle #toolControls .controlButton:active,
+body.sbx-neo3.neo-topstyle #controls .controlButton:active{ transform: translateY(1px); }
+
+/* Many “mode/tool” chips are just buttons; gently modernize them */
+body.sbx-neo3.neo-topstyle #controls button{
+  border-radius: 12px;
+}
+body.sbx-neo3.neo-topstyle .menuScreen,
+body.sbx-neo3.neo-topstyle #modManager,
+body.sbx-neo3.neo-topstyle #infoScreen,
+body.sbx-neo3.neo-topstyle #settingsMenu{
+  border-radius: 18px !important;
+  border: 1px solid var(--neo-border) !important;
+  background: var(--neo-panel) !important;
+  box-shadow: var(--neo-shadow) !important;
+  color: var(--neo-text) !important;
 }
 
-/* Sidebar + overlay */
-#psoOverlay{
+/* ===== Overlay ===== */
+#neo3Overlay{
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,.35);
-  z-index: 999990;
+  background: rgba(0,0,0,.40);
+  z-index: 999980;
   display:none;
 }
-#psoOverlay.open{ display:block; }
+#neo3Overlay.open{ display:block; }
 
-#psoSidebar{
+/* ===== Edge tabs (always visible, super clear open) ===== */
+#neo3EdgeL, #neo3EdgeR{
   position: fixed;
-  left: 8px;
-  top: calc(var(--pso-top) + 6px);
-  height: calc(100vh - var(--pso-top) - 14px);
-  width: var(--pso-w);
-  z-index: 999991;
-  color: var(--pso-text);
+  top: calc(var(--neo-top) + 16px);
+  z-index: 999995;
+  user-select: none;
+  cursor: pointer;
+  color: var(--neo-text);
+  background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04));
+  border: 1px solid var(--neo-border);
+  box-shadow: var(--neo-shadow2);
+  padding: 10px 10px;
+  border-radius: 14px;
+  opacity: .96;
+}
+#neo3EdgeL{ left: 8px; }
+#neo3EdgeR{ right: 8px; }
+#neo3EdgeL .lbl, #neo3EdgeR .lbl{
+  display:block;
+  font-weight: 800;
+  letter-spacing: .6px;
+  font-size: 12px;
+}
+#neo3EdgeL .sub, #neo3EdgeR .sub{
+  display:block;
+  font-size: 11px;
+  color: var(--neo-muted);
+  margin-top: 2px;
+}
+#neo3EdgeL.hidden, #neo3EdgeR.hidden{ display:none; }
 
-  background: linear-gradient(180deg, rgba(30,30,30,.94), rgba(14,14,14,.92));
-  border: 2px solid rgba(255,255,255,.18);
-  box-shadow: var(--pso-shadow);
-  border-radius: 10px;
+/* ===== Drawers ===== */
+.neo3Drawer{
+  position: fixed;
+  top: var(--neo-top);
+  height: calc(100vh - var(--neo-top));
+  z-index: 999990;
+  color: var(--neo-text);
+
+  background: var(--neo-panel);
+  border: 1px solid var(--neo-border);
+  box-shadow: var(--neo-shadow);
+  border-radius: 18px;
 
   display:flex;
   flex-direction: column;
 
-  transform: translateX(calc(-1 * (var(--pso-w) + 16px)));
+  transform: translateX(-110%);
   transition: transform 160ms ease;
 }
-#psoSidebar.open{ transform: translateX(0); }
+.neo3Drawer.open{ transform: translateX(0); }
 
-/* Header */
-#psoHeader{
+#neo3Elements{
+  left: 10px;
+  width: var(--neo-w-e);
+}
+#neo3Overhaul{
+  right: 10px;
+  width: var(--neo-w-o);
+  transform: translateX(110%);
+}
+#neo3Overhaul.open{ transform: translateX(0); }
+
+.neo3Drawer.max{
+  left: 10px !important;
+  right: 10px !important;
+  width: auto !important;
+}
+.neo3Drawer.max #neo3ElGrid{ grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 900px){
+  #neo3Elements{ width: min(var(--neo-w-e), calc(100vw - 20px)); }
+  #neo3Overhaul{ width: min(var(--neo-w-o), calc(100vw - 20px)); }
+  .neo3Drawer.max #neo3ElGrid{ grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 600px){
+  .neo3Drawer.max #neo3ElGrid{ grid-template-columns: repeat(2, 1fr); }
+}
+
+/* Drawer header */
+.neo3Hdr{
   display:flex;
   align-items:center;
   justify-content: space-between;
   gap: 8px;
-  padding: 10px 10px 8px 10px;
-
-  border-bottom: 2px solid rgba(255,255,255,.10);
-  background: rgba(0,0,0,.22);
+  padding: 12px 12px 10px 12px;
+  border-bottom: 1px solid var(--neo-border2);
+  background: rgba(0,0,0,.10);
+  border-top-left-radius: 18px;
+  border-top-right-radius: 18px;
 }
-#psoHeaderTitle{
+.neo3Title{
   display:flex;
   flex-direction: column;
   gap: 2px;
 }
-#psoHeaderTitle .title{
-  font-weight: 700;
-  letter-spacing: .5px;
-}
-#psoHeaderTitle .sub{
-  font-size: 12px;
-  color: var(--pso-muted);
-}
-.psoHdrBtns{ display:flex; gap:6px; }
+.neo3Title .t{ font-weight: 900; letter-spacing: .6px; }
+.neo3Title .s{ font-size: 12px; color: var(--neo-muted); }
 
-.psoBtn{
+.neo3Btns{ display:flex; gap: 8px; }
+.neo3Btn{
+  border-radius: 12px;
+  border: 1px solid var(--neo-border2);
+  background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04));
+  color: var(--neo-text);
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.neo3Btn:hover{ filter: brightness(1.08); }
+.neo3Btn:active{ transform: translateY(1px); }
+
+/* Tabs row */
+.neo3Tabs{
+  display:flex;
+  gap: 8px;
+  padding: 10px 12px 0 12px;
+}
+.neo3Tab{
+  flex: 1;
+  text-align:center;
+  padding: 8px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--neo-border2);
+  background: rgba(255,255,255,.04);
+  cursor:pointer;
+  color: var(--neo-text);
+  user-select:none;
+}
+.neo3Tab.active{
+  border-color: rgba(76,201,240,.55);
+  background: rgba(76,201,240,.10);
+}
+
+/* Search */
+.neo3SearchRow{
+  display:flex;
+  gap: 8px;
+  padding: 10px 12px 12px 12px;
+  border-bottom: 1px solid var(--neo-border2);
+}
+#neo3Search{
+  flex:1;
+  border-radius: 14px;
+  border: 1px solid var(--neo-border2);
+  background: rgba(255,255,255,.05);
+  color: var(--neo-text);
+  padding: 10px 12px;
+  outline:none;
+}
+#neo3Search::placeholder{ color: var(--neo-muted); }
+
+/* Content split */
+#neo3ElBody{
+  flex:1;
+  display:grid;
+  grid-template-columns: 140px 1fr;
+  gap: 10px;
+  padding: 10px 12px 12px 12px;
+  overflow:hidden;
+}
+
+/* Categories (left) */
+#neo3Cats{
+  border: 1px solid var(--neo-border2);
+  border-radius: 14px;
+  background: var(--neo-panel2);
+  overflow:auto;
+  padding: 8px;
+}
+#neo3Cats::-webkit-scrollbar{ width: 10px; }
+#neo3Cats::-webkit-scrollbar-thumb{ background: rgba(255,255,255,.14); border-radius: 999px; }
+
+.neo3Cat{
+  width: 100%;
+  text-align:left;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--neo-text);
   cursor:pointer;
   user-select:none;
-  color: var(--pso-text);
-  background: linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.04));
-  border: 2px solid rgba(255,255,255,.14);
-  border-radius: 8px;
-  padding: 6px 8px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+  margin-bottom: 6px;
 }
-.psoBtn:hover{ filter: brightness(1.08); }
-.psoBtn:active{ transform: translateY(1px); }
-
-/* Search row */
-#psoSearchRow{
-  padding: 8px 10px;
-  border-bottom: 2px solid rgba(255,255,255,.08);
-  display:flex;
-  gap: 8px;
-  align-items:center;
-}
-#psoSearch{
-  flex:1;
-  height: 30px;
-  padding: 0 8px;
-  border-radius: 8px;
-  border: 2px solid rgba(255,255,255,.14);
-  background: rgba(0,0,0,.35);
-  color: var(--pso-text);
-  outline:none;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
-}
-#psoSearch::placeholder{ color: var(--pso-muted); }
-
-/* Category bar */
-#psoCats{
-  padding: 8px 10px 6px 10px;
-  border-bottom: 2px solid rgba(255,255,255,.08);
-  display:flex;
-  gap: 6px;
-  overflow-x: auto;
-  scrollbar-width: thin;
-}
-#psoCats::-webkit-scrollbar{ height: 8px; }
-#psoCats::-webkit-scrollbar-thumb{ background: rgba(255,255,255,.14); border-radius: 999px; }
-.psoCat{
-  white-space: nowrap;
-  border-radius: 999px;
-  padding: 5px 10px;
-  border: 2px solid rgba(255,255,255,.12);
-  background: rgba(0,0,0,.22);
-  color: var(--pso-text);
-  cursor:pointer;
-}
-.psoCat.active{
-  border-color: rgba(255,255,255,.30);
-  background: rgba(255,255,255,.10);
+.neo3Cat:hover{ background: rgba(255,255,255,.05); }
+.neo3Cat.active{
+  border-color: rgba(167,139,250,.45);
+  background: rgba(167,139,250,.10);
 }
 
-/* Chips (favorites/recents) */
-#psoChips{
-  padding: 8px 10px 0 10px;
+/* Elements grid (right) */
+#neo3ElRight{
   display:flex;
   flex-direction: column;
-  gap: 8px;
-}
-.psoSectionTitle{
-  font-size: 12px;
-  color: var(--pso-muted);
-  margin-bottom: 4px;
-}
-.psoChipRow{
-  display:flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  max-height: 64px;
-  overflow:auto;
-  padding-bottom: 4px;
-}
-.psoChipRow::-webkit-scrollbar{ height: 8px; width: 8px; }
-.psoChipRow::-webkit-scrollbar-thumb{ background: rgba(255,255,255,.14); border-radius: 999px; }
-
-.psoChip{
-  display:flex;
-  gap: 8px;
-  align-items:center;
-  max-width: 240px;
-  padding: 5px 10px;
-  border-radius: 999px;
-  border: 2px solid rgba(255,255,255,.12);
-  background: rgba(0,0,0,.20);
-  cursor:pointer;
-}
-.psoDot{
-  width: 9px;
-  height: 9px;
-  border-radius: 999px;
-  box-shadow: inset 0 0 0 2px rgba(0,0,0,.25);
-}
-.psoChipTxt{
+  gap: 10px;
   overflow:hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
-
-/* Element list */
-#psoListWrap{
+#neo3ElGridWrap{
   flex: 1;
-  padding: 10px;
-  overflow: hidden;
+  border: 1px solid var(--neo-border2);
+  border-radius: 14px;
+  background: var(--neo-panel2);
+  overflow:hidden;
+  display:flex;
+  flex-direction: column;
 }
-#psoList{
-  height: 100%;
-  overflow: auto;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  padding-right: 4px;
+#neo3ElGridHead{
+  padding: 10px 10px 8px 10px;
+  border-bottom: 1px solid var(--neo-border2);
+  display:flex;
+  justify-content: space-between;
+  align-items:center;
+  gap: 10px;
 }
-#psoList::-webkit-scrollbar{ width: 10px; }
-#psoList::-webkit-scrollbar-thumb{ background: rgba(255,255,255,.14); border-radius: 999px; }
+#neo3Count{ font-size: 12px; color: var(--neo-muted); }
 
-.psoElBtn{
+#neo3ElGrid{
+  padding: 10px;
+  overflow:auto;
+  display:grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+#neo3ElGrid::-webkit-scrollbar{ width: 10px; }
+#neo3ElGrid::-webkit-scrollbar-thumb{ background: rgba(255,255,255,.14); border-radius: 999px; }
+
+.neo3ElBtn{
   position: relative;
   display:flex;
   align-items:center;
   gap: 10px;
-
-  border-radius: 10px;
-  padding: 8px 10px;
+  padding: 10px 10px;
+  border-radius: 14px;
+  border: 1px solid var(--neo-border2);
+  background: linear-gradient(180deg, rgba(255,255,255,.09), rgba(255,255,255,.03));
+  color: var(--neo-text);
   cursor:pointer;
-
-  color: var(--pso-text);
-  border: 2px solid rgba(255,255,255,.12);
-  background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
   user-select:none;
 }
-.psoElBtn:hover{ filter: brightness(1.10); }
-.psoElBtn:active{ transform: translateY(1px); }
-
-.psoElName{
+.neo3ElBtn:hover{ filter: brightness(1.10); }
+.neo3ElBtn:active{ transform: translateY(1px); }
+.neo3Dot{
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 2px rgba(0,0,0,.25);
+}
+.neo3Name{
   overflow:hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-.psoStar{
+.neo3Star{
   position:absolute;
-  top: 6px;
-  right: 8px;
+  right: 10px;
+  top: 8px;
   font-size: 12px;
-  opacity: .85;
+  opacity: .9;
 }
 
-/* Tooltip */
-#psoTip{
+/* Preview */
+#neo3Preview{
+  border: 1px solid var(--neo-border2);
+  border-radius: 14px;
+  background: rgba(255,255,255,.04);
+  padding: 10px 10px;
+  display:none;
+}
+#neo3Preview.show{ display:block; }
+#neo3Preview .muted{ color: var(--neo-muted); font-size: 12px; }
+
+/* Resize handles */
+.neo3Resize{
+  position:absolute;
+  top: 10px;
+  bottom: 10px;
+  width: 10px;
+  cursor: ew-resize;
+  opacity: .6;
+}
+#neo3ResE{ right: -4px; }
+#neo3ResO{ left: -4px; }
+
+/* Tooltip + toast */
+#neo3Tip{
   position: fixed;
   z-index: 999999;
-  pointer-events: none;
   display:none;
   max-width: 360px;
-  padding: 8px 10px;
-  border-radius: 10px;
-  background: rgba(0,0,0,.88);
-  border: 2px solid rgba(255,255,255,.14);
-  color: var(--pso-text);
-  box-shadow: var(--pso-shadow);
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(12,14,18,.94);
+  border: 1px solid var(--neo-border);
+  color: var(--neo-text);
+  box-shadow: var(--neo-shadow2);
+  pointer-events:none;
   font-size: 12px;
 }
-#psoTip .muted{ color: var(--pso-muted); }
+#neo3Tip .muted{ color: var(--neo-muted); }
 
-/* Settings panel (scrollable, fits screen) */
-#psoSettings{
+#neo3Toast{
   position: fixed;
-  right: 10px;
-  top: calc(var(--pso-top) + 6px);
-  z-index: 999992;
-
-  width: 360px;
-  max-width: calc(100vw - 20px);
-  max-height: calc(100vh - var(--pso-top) - 14px);
-  overflow: auto;
-
+  left: 12px;
+  bottom: 12px;
+  z-index: 999999;
   display:none;
-  background: linear-gradient(180deg, rgba(30,30,30,.94), rgba(14,14,14,.92));
-  border: 2px solid rgba(255,255,255,.18);
-  border-radius: 10px;
-  box-shadow: var(--pso-shadow);
-  color: var(--pso-text);
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(12,14,18,.94);
+  border: 1px solid var(--neo-border);
+  color: var(--neo-text);
+  box-shadow: var(--neo-shadow2);
+  font-size: 12px;
 }
-#psoSettings.open{ display:block; }
 
-#psoSettingsHeader{
-  position: sticky;
-  top: 0;
-  background: rgba(0,0,0,.22);
-  border-bottom: 2px solid rgba(255,255,255,.10);
-  padding: 10px;
-  display:flex;
-  justify-content: space-between;
-  align-items:center;
-  gap: 8px;
+/* Overhaul panel content scroll */
+#neo3OverBody{
+  flex:1;
+  overflow:auto;
+  padding: 10px 12px 12px 12px;
 }
-#psoSettingsBody{ padding: 10px; }
-.psoToggle{
+#neo3OverBody::-webkit-scrollbar{ width: 10px; }
+#neo3OverBody::-webkit-scrollbar-thumb{ background: rgba(255,255,255,.14); border-radius: 999px; }
+
+.neo3Section{
+  margin: 10px 0 8px 0;
+  font-weight: 900;
+  letter-spacing: .4px;
+}
+.neo3Toggle{
   display:flex;
   gap: 10px;
   align-items:flex-start;
-  padding: 8px;
-  border-radius: 10px;
+  padding: 10px 10px;
+  border-radius: 14px;
   cursor:pointer;
+  border: 1px solid transparent;
 }
-.psoToggle:hover{ background: rgba(255,255,255,.05); }
-.psoSmall{ font-size: 12px; color: var(--pso-muted); }
-#psoToast{
-  position: fixed;
-  left: 10px;
-  bottom: 10px;
-  z-index: 999999;
-  display:none;
-
-  padding: 8px 10px;
-  border-radius: 10px;
-  background: rgba(0,0,0,.88);
-  border: 2px solid rgba(255,255,255,.14);
-  color: var(--pso-text);
-  box-shadow: var(--pso-shadow);
-  font-size: 12px;
-}
+.neo3Toggle:hover{ background: rgba(255,255,255,.05); border-color: rgba(255,255,255,.06); }
+.neo3Small{ font-size: 12px; color: var(--neo-muted); margin-top: 2px; }
 `;
   }
 
-  // ---------- State
-  let currentCategory = "all";
+  // ---------- state
+  let currentTab = localStorage.getItem(MOD.keys.tab) || "all"; // all|fav|recent
+  let currentCat = localStorage.getItem(MOD.keys.cat) || "all";
   let lastSelected = null;
   let currentSelected = null;
+  let hovered = null;
 
-  function getFavs() { return loadList(MOD.keys.favorites); }
-  function setFavs(a) { saveList(MOD.keys.favorites, a, 30); }
-  function getRecents() { return loadList(MOD.keys.recents); }
-  function setRecents(a) { saveList(MOD.keys.recents, a, 18); }
+  const getFavs = () => loadList(MOD.keys.favs);
+  const setFavs = (a) => saveList(MOD.keys.favs, a, 40);
+  const getRecents = () => loadList(MOD.keys.recents);
+  const setRecents = (a) => saveList(MOD.keys.recents, a, 24);
 
   function toast(msg) {
-    const s = loadSettings();
-    if (!s.toasts) return;
-    const t = $("#psoToast");
+    if (!loadSettings().toasts) return;
+    const t = $("#neo3Toast");
     if (!t) return;
     t.textContent = msg;
     t.style.display = "block";
@@ -439,8 +546,7 @@ body.sbx-pso.pso-hide-vanilla #elementControls{
 
   function elementColor(name) {
     const def = window.elements?.[name];
-    if (!def) return "rgba(255,255,255,.35)";
-    const c = def.color;
+    const c = def?.color;
     if (Array.isArray(c) && c.length) return c[0];
     if (typeof c === "string") return c;
     return "rgba(255,255,255,.35)";
@@ -448,44 +554,27 @@ body.sbx-pso.pso-hide-vanilla #elementControls{
 
   function prettyName(name) {
     const def = window.elements?.[name];
-    // many mods/games store display name here; if not, fallback
     const candidate = def?.name || def?.displayName || def?.label;
     if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
     return String(name).replace(/_/g, " ");
   }
 
-  function categoriesFromDOMOrFallback() {
-    // Try to match language + order by reading existing category buttons
-    const domBtns = $$(".categoryButton").filter(b => b.textContent && b.textContent.trim());
-    const out = [];
-    const seen = new Set();
-    for (const b of domBtns) {
-      const key =
-        b.getAttribute("category") ||
-        b.getAttribute("data-category") ||
-        (b.id?.startsWith("categoryButton-") ? b.id.replace("categoryButton-", "") : null) ||
-        b.textContent.trim().toLowerCase().replace(/\s+/g, "_");
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      out.push({ key, label: b.textContent.trim() });
+  function buildCategoryLabelsFromDOM() {
+    const map = new Map();
+    for (const b of $$(".categoryButton")) {
+      const id = b.id || "";
+      const key = id.startsWith("categoryButton-") ? id.replace("categoryButton-", "") : (b.getAttribute("category") || b.getAttribute("data-category"));
+      if (!key) continue;
+      const label = (b.textContent || "").trim();
+      if (label) map.set(key, label);
     }
-    // Fallback: build from elements
-    if (!out.length && window.elements) {
-      const cats = new Map();
-      for (const [name, def] of Object.entries(window.elements)) {
-        if (!def || def.hidden) continue;
-        const c = def.category || "other";
-        cats.set(c, c);
-      }
-      return [...cats.keys()].sort().map(c => ({ key: c, label: String(c).toUpperCase() }));
-    }
-    return out;
+    return map;
   }
 
-  function buildElementIndex() {
+  function buildIndex() {
     const byCat = new Map();
     const all = [];
-    if (!window.elements) return { byCat, all };
+    if (!window.elements) return { byCat, all, cats: ["all"] };
 
     for (const [name, def] of Object.entries(window.elements)) {
       if (!def || def.hidden) continue;
@@ -495,143 +584,206 @@ body.sbx-pso.pso-hide-vanilla #elementControls{
       all.push(name);
     }
 
-    // Stable sort by display name
-    const nameSort = (a, b) => prettyName(a).localeCompare(prettyName(b));
-    for (const [k, arr] of byCat.entries()) arr.sort(nameSort);
-    all.sort(nameSort);
+    const sortFn = (a, b) => prettyName(a).localeCompare(prettyName(b));
+    for (const [k, arr] of byCat.entries()) arr.sort(sortFn);
+    all.sort(sortFn);
 
-    return { byCat, all };
+    const cats = ["all", ...Array.from(byCat.keys()).sort((a, b) => String(a).localeCompare(String(b)))];
+    return { byCat, all, cats };
   }
 
-  // ---------- UI Build
-  function updateTopOffsetVar() {
+  // ---------- open/close + maximize
+  function isOpenElements() { return localStorage.getItem(MOD.keys.openElements) === "1"; }
+  function isOpenOverhaul() { return localStorage.getItem(MOD.keys.openOverhaul) === "1"; }
+
+  function setOpenElements(open) {
+    localStorage.setItem(MOD.keys.openElements, open ? "1" : "0");
+    $("#neo3Elements")?.classList.toggle("open", open);
+    syncOverlay();
+    syncEdgeTabs();
+  }
+  function setOpenOverhaul(open) {
+    localStorage.setItem(MOD.keys.openOverhaul, open ? "1" : "0");
+    $("#neo3Overhaul")?.classList.toggle("open", open);
+    syncOverlay();
+    syncEdgeTabs();
+  }
+
+  function syncOverlay() {
+    const any = isOpenElements() || isOpenOverhaul();
+    $("#neo3Overlay")?.classList.toggle("open", any);
+  }
+  function syncEdgeTabs() {
+    // edge tabs show when their panel is closed
+    $("#neo3EdgeL")?.classList.toggle("hidden", isOpenElements() || !loadSettings().enable);
+    $("#neo3EdgeR")?.classList.toggle("hidden", isOpenOverhaul() || !loadSettings().enable);
+  }
+
+  function setMax(which, on) {
+    const key = which === "elements" ? MOD.keys.maxElements : MOD.keys.maxOverhaul;
+    localStorage.setItem(key, on ? "1" : "0");
+    const id = which === "elements" ? "#neo3Elements" : "#neo3Overhaul";
+    $(id)?.classList.toggle("max", on);
+  }
+  function isMax(which) {
+    const key = which === "elements" ? MOD.keys.maxElements : MOD.keys.maxOverhaul;
+    return localStorage.getItem(key) === "1";
+  }
+
+  // ---------- top offset (start drawers below ALL top UI rows)
+  function updateTopOffset() {
+    const controls = $("#controls");
+    if (!controls) return;
+
+    let top = 72;
+    const cat = $("#categoryControls");
+
+    // take all children before categoryControls, compute max bottom
+    const kids = Array.from(controls.children || []);
+    const cut = cat ? kids.indexOf(cat) : -1;
+    const scan = cut > 0 ? kids.slice(0, cut) : kids;
+
+    for (const k of scan) {
+      if (!(k instanceof HTMLElement)) continue;
+      const st = getComputedStyle(k);
+      if (st.display === "none" || st.visibility === "hidden") continue;
+      const r = k.getBoundingClientRect();
+      if (r.height > 0) top = Math.max(top, Math.round(r.bottom) + 8);
+    }
+
+    // fallback: toolControls
     const tc = $("#toolControls");
-    const rect = tc?.getBoundingClientRect?.();
-    const top = rect ? Math.round(rect.bottom + 6) : 54;
-    document.body.style.setProperty("--pso-top", `${top}px`);
+    if (tc) top = Math.max(top, Math.round(tc.getBoundingClientRect().bottom) + 8);
+
+    document.body.style.setProperty("--neo-top", `${top}px`);
   }
 
-  function ensureCoreUI() {
-    if ($("#psoSidebar")) return;
+  // ---------- build UI
+  function ensureUI() {
+    if ($("#neo3Elements")) return;
 
-    document.body.classList.add("sbx-pso");
+    document.body.classList.add("sbx-neo3");
 
     // overlay
-    document.body.appendChild(el("div", { id: "psoOverlay", onclick: () => setSidebarOpen(false) }));
+    document.body.appendChild(el("div", { id: "neo3Overlay", onclick: () => { setOpenElements(false); setOpenOverhaul(false); } }));
 
-    // sidebar
-    const sidebar = el("div", { id: "psoSidebar" });
+    // edge tabs (super clear)
+    document.body.appendChild(el("div", {
+      id: "neo3EdgeL",
+      onclick: () => setOpenElements(true),
+      title: "Open Elements (B)"
+    }, el("span", { class: "lbl" }, "ELEMENTS"), el("span", { class: "sub" }, "Open")));
 
-    const header = el("div", { id: "psoHeader" },
-      el("div", { id: "psoHeaderTitle" },
-        el("div", { class: "title" }, "ELEMENTS"),
-        el("div", { class: "sub", id: "psoSub" }, "Search • Categories • Favorites")
-      ),
-      el("div", { class: "psoHdrBtns" },
-        el("button", { class: "psoBtn", title: "Settings", onclick: () => toggleSettings() }, "⚙"),
-        el("button", { class: "psoBtn", title: "Close", onclick: () => setSidebarOpen(false) }, "×")
-      )
-    );
+    document.body.appendChild(el("div", {
+      id: "neo3EdgeR",
+      onclick: () => setOpenOverhaul(true),
+      title: "Open Overhaul (O)"
+    }, el("span", { class: "lbl" }, "OVERHAUL"), el("span", { class: "sub" }, "Settings")));
 
-    const searchRow = el("div", { id: "psoSearchRow" },
-      el("input", { id: "psoSearch", type: "text", placeholder: "Search…   (/ or Ctrl+K)" }),
-      el("button", {
-        class: "psoBtn",
-        title: "Clear search (Esc)",
-        onclick: () => {
-          const i = $("#psoSearch");
-          i.value = "";
-          renderElements();
-          i.focus();
-        }
-      }, "×")
-    );
+    // toast + tooltip
+    document.body.appendChild(el("div", { id: "neo3Toast" }));
+    document.body.appendChild(el("div", { id: "neo3Tip" }));
 
-    const cats = el("div", { id: "psoCats" });
-    const chips = el("div", { id: "psoChips" });
-
-    const listWrap = el("div", { id: "psoListWrap" },
-      el("div", { id: "psoList" })
-    );
-
-    sidebar.append(header, searchRow, cats, chips, listWrap);
-    document.body.appendChild(sidebar);
-
-    // settings panel
-    const settings = el("div", { id: "psoSettings" },
-      el("div", { id: "psoSettingsHeader" },
-        el("div", {},
-          el("div", { style: "font-weight:700;" }, `${MOD.name}`),
-          el("div", { class: "psoSmall" }, `v${MOD.version} • scrollable`)
+    // Elements drawer
+    const elDrawer = el("div", { id: "neo3Elements", class: "neo3Drawer" },
+      el("div", { class: "neo3Hdr" },
+        el("div", { class: "neo3Title" },
+          el("div", { class: "t" }, "ELEMENTS"),
+          el("div", { class: "s", id: "neo3ElSub" }, "Search • Categories • Grid")
         ),
-        el("button", { class: "psoBtn", onclick: () => toggleSettings(false) }, "×")
+        el("div", { class: "neo3Btns" },
+          el("button", { class: "neo3Btn", title: "Maximize", onclick: () => setMax("elements", !isMax("elements")) }, "⤢"),
+          el("button", { class: "neo3Btn", title: "Overhaul", onclick: () => setOpenOverhaul(true) }, "⚙"),
+          el("button", { class: "neo3Btn", title: "Close", onclick: () => setOpenElements(false) }, "×"),
+        )
       ),
-      el("div", { id: "psoSettingsBody" })
+      el("div", { class: "neo3Tabs" },
+        el("div", { class: "neo3Tab", id: "neo3TabAll", onclick: () => setTab("all") }, "All"),
+        el("div", { class: "neo3Tab", id: "neo3TabFav", onclick: () => setTab("fav") }, "Favorites"),
+        el("div", { class: "neo3Tab", id: "neo3TabRec", onclick: () => setTab("recent") }, "Recents")
+      ),
+      el("div", { class: "neo3SearchRow" },
+        el("input", { id: "neo3Search", type: "text", placeholder: "Search elements…   (/ or Ctrl+K)" }),
+        el("button", { class: "neo3Btn", title: "Clear search (Esc)", onclick: () => { $("#neo3Search").value = ""; renderElements(); $("#neo3Search").focus(); } }, "×")
+      ),
+      el("div", { id: "neo3ElBody" },
+        el("div", { id: "neo3Cats" }),
+        el("div", { id: "neo3ElRight" },
+          el("div", { id: "neo3ElGridWrap" },
+            el("div", { id: "neo3ElGridHead" },
+              el("div", { id: "neo3Count" }, ""),
+              el("div", { style: "display:flex; gap:8px; align-items:center;" },
+                el("button", { class: "neo3Btn", title: "Toggle auto-close on pick", onclick: () => { const s = loadSettings(); s.autoCloseOnPick = !s.autoCloseOnPick; saveSettings(s); toast(`Auto-close: ${s.autoCloseOnPick ? "ON" : "OFF"}`); } }, "📌"),
+                el("button", { class: "neo3Btn", title: "Close drawer (B)", onclick: () => setOpenElements(false) }, "Hide"),
+              )
+            ),
+            el("div", { id: "neo3ElGrid" }),
+          ),
+          el("div", { id: "neo3Preview" })
+        )
+      ),
+      el("div", { id: "neo3ResE", class: "neo3Resize", title: "Drag to resize" })
     );
-    document.body.appendChild(settings);
 
-    // tooltip + toast
-    document.body.appendChild(el("div", { id: "psoTip" }));
-    document.body.appendChild(el("div", { id: "psoToast" }));
+    // Overhaul drawer
+    const overDrawer = el("div", { id: "neo3Overhaul", class: "neo3Drawer" },
+      el("div", { class: "neo3Hdr" },
+        el("div", { class: "neo3Title" },
+          el("div", { class: "t" }, "OVERHAUL"),
+          el("div", { class: "s" }, "Full-height • Scrollable • Toggles")
+        ),
+        el("div", { class: "neo3Btns" },
+          el("button", { class: "neo3Btn", title: "Maximize", onclick: () => setMax("overhaul", !isMax("overhaul")) }, "⤢"),
+          el("button", { class: "neo3Btn", title: "Elements", onclick: () => setOpenElements(true) }, "☰"),
+          el("button", { class: "neo3Btn", title: "Close", onclick: () => setOpenOverhaul(false) }, "×"),
+        )
+      ),
+      el("div", { id: "neo3OverBody" }),
+      el("div", { id: "neo3ResO", class: "neo3Resize", title: "Drag to resize" })
+    );
 
-    // horizontal scroll with wheel on category row
-    cats.addEventListener("wheel", (ev) => {
-      if (Math.abs(ev.deltaY) > Math.abs(ev.deltaX)) {
-        cats.scrollLeft += ev.deltaY;
-        ev.preventDefault();
-      }
-    }, { passive: false });
+    document.body.append(elDrawer, overDrawer);
 
-    // search behavior
-    $("#psoSearch").addEventListener("input", () => renderElements());
+    $("#neo3Search").addEventListener("input", () => renderElements());
   }
 
-  function addHamburgerButton() {
+  function addTopButtons() {
     const tc = $("#toolControls");
-    if (!tc || $("#psoHamburger")) return;
+    if (!tc) return;
 
-    const btn = el("button", {
-      id: "psoHamburger",
-      class: "controlButton",
-      title: "Open/Close element sidebar (≡)",
-      onclick: () => setSidebarOpen(!isSidebarOpen()),
-    }, "≡");
+    // clear + obvious
+    if (!$("#neo3TopElements")) {
+      const b = el("button", {
+        id: "neo3TopElements",
+        class: "controlButton",
+        title: "Open Elements (B)",
+        onclick: () => setOpenElements(!isOpenElements())
+      }, "☰ Elements");
+      tc.prepend(b);
+    }
 
-    // put it near the left of tool buttons
-    tc.prepend(btn);
+    if (!$("#neo3TopOverhaul")) {
+      const b = el("button", {
+        id: "neo3TopOverhaul",
+        class: "controlButton",
+        title: "Open Overhaul (O)",
+        onclick: () => setOpenOverhaul(!isOpenOverhaul())
+      }, "⚙ Overhaul");
+      tc.appendChild(b);
+    }
   }
 
-  function isSidebarOpen() {
-    return localStorage.getItem(MOD.keys.sidebarOpen) === "1";
-  }
-  function setSidebarOpen(open) {
-    localStorage.setItem(MOD.keys.sidebarOpen, open ? "1" : "0");
-    $("#psoSidebar")?.classList.toggle("open", open);
-    $("#psoOverlay")?.classList.toggle("open", open);
-  }
-
-  function toggleSettings(force) {
-    const panel = $("#psoSettings");
-    if (!panel) return;
-    const open = (typeof force === "boolean") ? force : !panel.classList.contains("open");
-    panel.classList.toggle("open", open);
-  }
-
-  function applyHideVanilla() {
-    const s = loadSettings();
-    document.body.classList.toggle("pso-hide-vanilla", !!(s.enableSidebar && s.hideVanillaElementUI));
-  }
-
-  function buildSettingsPanel() {
-    const body = $("#psoSettingsBody");
+  // ---------- settings panel content
+  function buildOverhaulPanel() {
+    const body = $("#neo3OverBody");
     if (!body) return;
     body.innerHTML = "";
 
     const s = loadSettings();
 
     function toggleRow(key, title, desc) {
-      const id = `pso_${key}`;
-      const row = el("label", { class: "psoToggle", for: id },
+      const id = `neo3_${key}`;
+      const row = el("label", { class: "neo3Toggle", for: id },
         el("input", {
           id, type: "checkbox",
           checked: s[key] ? "checked" : null,
@@ -643,108 +795,86 @@ body.sbx-pso.pso-hide-vanilla #elementControls{
           }
         }),
         el("div", {},
-          el("div", { style: "font-weight:700;" }, title),
-          el("div", { class: "psoSmall" }, desc)
+          el("div", { style: "font-weight:800;" }, title),
+          el("div", { class: "neo3Small" }, desc)
         )
       );
       return row;
     }
 
-    const section = (t) => el("div", { style: "margin: 10px 0 6px 2px; font-weight:700;" }, t);
+    function section(title) {
+      return el("div", { class: "neo3Section" }, title);
+    }
 
     body.append(
       section("UI"),
-      toggleRow("enableSidebar", "Enable left element sidebar", "Main feature: a scrollable bar with categories + search"),
-      toggleRow("hideVanillaElementUI", "Hide vanilla element/category rows", "Cleaner screen; sidebar becomes the main UI"),
-      toggleRow("sidebarOpenByDefault", "Open sidebar by default", "Keeps it open after refresh"),
-      toggleRow("showFavorites", "Show favorites", "Right-click element = favorite"),
-      toggleRow("showRecents", "Show recents", "Shows last used elements"),
-      toggleRow("showTooltips", "Tooltips", "Hover element buttons for info"),
-
-      el("div", { style: "height: 2px; background: rgba(255,255,255,.08); margin: 10px 0;" }),
+      toggleRow("restyleTopUI", "New-looking top GUI", "Modern pills + menus (matches the new vibe)"),
+      toggleRow("hideVanillaElementUI", "Hide vanilla element/category rows", "Use the big drawers instead"),
+      toggleRow("openElementsOnStart", "Open Elements on start", "Opens drawer automatically on refresh"),
+      toggleRow("showPreview", "Show element preview", "Extra info panel in Elements drawer"),
+      toggleRow("showTooltips", "Tooltips", "Hover element buttons for quick stats"),
+      toggleRow("autoCloseOnPick", "Auto-close after selecting element", "If you want more screen for the sim"),
 
       section("Quality of life"),
-      toggleRow("hotkeys", "Hotkeys", "/ search, Ctrl+K search, Q swap last, Alt+1..9 favs, Shift+1..9 recents"),
-      toggleRow("altWheelBrush", "Alt+Wheel brush size", "Fast brush resizing"),
-      toggleRow("altMiddlePick", "Alt+MiddleClick pick", "Pick the element under cursor from the canvas"),
-      toggleRow("altClickInspect", "Alt+Click inspector", "Quick pixel info box"),
-      toggleRow("toasts", "Toasts", "Small notifications for actions"),
-
-      el("div", { style: "height: 2px; background: rgba(255,255,255,.08); margin: 10px 0;" }),
+      toggleRow("hotkeys", "Hotkeys", "B elements, O overhaul, / search, Ctrl+K search, Q swap last"),
+      toggleRow("toasts", "Toasts", "Small notifications"),
 
       section("Tweaks / performance"),
-      toggleRow("smartHumans", "Smart humans", "Humans step away from danger"),
-      toggleRow("trappedSkipFluids", "Skip trapped fluids", "Helps lag with huge enclosed fluid blobs"),
-      toggleRow("lazyGases", "Lazy gases", "Helps lag with huge enclosed gas blobs"),
+      toggleRow("smartHumans", "Smart humans", "Humans try to step away from danger"),
+      toggleRow("trappedSkipFluids", "Skip trapped fluids", "Helps lag with enclosed big fluid blobs"),
+      toggleRow("lazyGases", "Lazy gases", "Helps lag with enclosed big gas blobs"),
 
-      el("div", { style: "display:flex; gap:8px; flex-wrap:wrap; margin-top: 10px;" },
-        el("button", {
-          class: "psoBtn",
-          onclick: () => { setFavs([]); renderChips(); renderElements(); toast("Favorites cleared"); }
-        }, "Clear favs"),
-        el("button", {
-          class: "psoBtn",
-          onclick: () => { setRecents([]); renderChips(); toast("Recents cleared"); }
-        }, "Clear recents"),
-        el("button", {
-          class: "psoBtn",
-          onclick: () => { saveSettings({ ...MOD.defaults }); toast("Reset settings"); location.reload(); }
-        }, "Reset + reload")
+      el("div", { style: "height:1px; background: rgba(255,255,255,.08); margin: 12px 0;" }),
+
+      el("div", { style: "display:flex; gap:10px; flex-wrap:wrap;" },
+        el("button", { class: "neo3Btn", onclick: () => { setFavs([]); toast("Favorites cleared"); renderElements(); } }, "Clear favs"),
+        el("button", { class: "neo3Btn", onclick: () => { setRecents([]); toast("Recents cleared"); renderElements(); } }, "Clear recents"),
+        el("button", { class: "neo3Btn", onclick: () => { saveSettings({ ...MOD.defaults }); toast("Reset + reload"); location.reload(); } }, "Reset + reload")
       ),
 
-      el("div", { class: "psoSmall", style: "margin-top:10px;" },
-        "Tip: If another mod also edits the UI, disable it to avoid layout fights."
+      el("div", { class: "neo3Small", style: "margin-top: 10px;" },
+        "Tip: drag the drawer edge to resize • click ⤢ to maximize • use the left/right edge tabs to open."
       )
     );
   }
 
   function liveApply() {
     const s = loadSettings();
-    applyHideVanilla();
 
-    // sidebar on/off
-    if (!s.enableSidebar) {
-      setSidebarOpen(false);
-      $("#psoSidebar")?.classList.remove("open");
-      $("#psoOverlay")?.classList.remove("open");
-      return;
-    }
+    document.body.classList.toggle("neo-topstyle", !!s.restyleTopUI);
+    document.body.classList.toggle("neo-hide-vanilla", !!(s.enable && s.hideVanillaElementUI));
 
-    // chips + list rerender
-    renderCategories();
-    renderChips();
+    buildOverhaulPanel();
+    renderCats();
     renderElements();
+    syncEdgeTabs();
 
-    // tooltip toggle
-    if (!s.showTooltips) $("#psoTip").style.display = "none";
-
-    // open by default
-    if (s.sidebarOpenByDefault && localStorage.getItem(MOD.keys.sidebarOpen) == null) {
-      setSidebarOpen(true);
-    }
+    // preview toggle
+    $("#neo3Preview")?.classList.toggle("show", !!(s.showPreview));
   }
 
-  // ---------- Favorites/Recents + select tracking
+  // ---------- favorites/recents/selection
   function toggleFavorite(name) {
+    if (!name) return;
     const favs = getFavs();
     const i = favs.indexOf(name);
-    if (i >= 0) { favs.splice(i, 1); toast(`Unfavorited: ${prettyName(name)}`); }
-    else { favs.unshift(name); toast(`Favorited: ${prettyName(name)}`); }
+    if (i >= 0) favs.splice(i, 1);
+    else favs.unshift(name);
     setFavs(favs);
-    renderChips();
+    toast((i >= 0) ? `Unfavorited: ${prettyName(name)}` : `Favorited: ${prettyName(name)}`);
     renderElements();
   }
 
   function pushRecent(name) {
+    if (!name) return;
     const r = getRecents();
     const next = [name, ...r.filter(x => x !== name)];
     setRecents(next);
-    renderChips();
   }
 
   function hookSelectElement() {
     if (typeof window.selectElement !== "function") return;
-    if (window.selectElement.__psoWrapped) return;
+    if (window.selectElement.__neo3Wrapped) return;
 
     const old = window.selectElement;
     function wrapped(name, ...rest) {
@@ -752,378 +882,312 @@ body.sbx-pso.pso-hide-vanilla #elementControls{
         lastSelected = currentSelected;
         currentSelected = name;
         pushRecent(name);
+        if (loadSettings().autoCloseOnPick) setOpenElements(false);
+        updatePreview(name);
       } catch {}
       return old.call(this, name, ...rest);
     }
-    wrapped.__psoWrapped = true;
+    wrapped.__neo3Wrapped = true;
     window.selectElement = wrapped;
   }
 
-  // ---------- Render categories / chips / elements
-  function renderCategories() {
-    const catsWrap = $("#psoCats");
-    if (!catsWrap) return;
+  // ---------- tabs + categories
+  function setTab(t) {
+    currentTab = t;
+    localStorage.setItem(MOD.keys.tab, t);
+    $("#neo3TabAll")?.classList.toggle("active", t === "all");
+    $("#neo3TabFav")?.classList.toggle("active", t === "fav");
+    $("#neo3TabRec")?.classList.toggle("active", t === "recent");
+    renderCats();
+    renderElements();
+  }
 
-    const s = loadSettings();
-    if (!s.enableSidebar) return;
+  function setCat(c) {
+    currentCat = c;
+    localStorage.setItem(MOD.keys.cat, c);
+    renderCats();
+    renderElements();
+  }
 
-    catsWrap.innerHTML = "";
+  function renderCats() {
+    const wrap = $("#neo3Cats");
+    if (!wrap) return;
 
-    const cats = categoriesFromDOMOrFallback();
-    const allBtn = el("button", { class: `psoCat ${currentCategory === "all" ? "active" : ""}` }, "ALL");
-    allBtn.onclick = () => { currentCategory = "all"; renderCategories(); renderElements(); };
-    catsWrap.appendChild(allBtn);
+    const { cats } = buildIndex();
+    const labelMap = buildCategoryLabelsFromDOM();
 
+    wrap.innerHTML = "";
     for (const c of cats) {
-      const btn = el("button", { class: `psoCat ${currentCategory === c.key ? "active" : ""}` }, c.label);
-      btn.onclick = () => { currentCategory = c.key; renderCategories(); renderElements(); };
-      catsWrap.appendChild(btn);
+      const label = (c === "all") ? "All" : (labelMap.get(c) || String(c).replace(/_/g, " "));
+      const btn = el("button", { class: `neo3Cat ${currentCat === c ? "active" : ""}` }, label);
+      btn.onclick = () => setCat(c);
+      wrap.appendChild(btn);
     }
   }
 
-  function chip(label, name) {
-    const dot = el("span", { class: "psoDot", style: `background:${elementColor(name)};` });
-    const txt = el("span", { class: "psoChipTxt" }, label);
-    const b = el("button", { class: "psoChip", title: "Click to select" }, dot, txt);
-    b.onclick = () => { window.selectElement?.(name); setSidebarOpen(true); };
-    return b;
+  // ---------- element rendering
+  function inCat(name, def) {
+    if (currentCat === "all") return true;
+    return String(def?.category || "other") === String(currentCat);
   }
 
-  function renderChips() {
-    const chipsWrap = $("#psoChips");
-    if (!chipsWrap) return;
+  function tabList({ all, byCat }) {
+    const favs = getFavs().filter(n => window.elements?.[n]);
+    const rec = getRecents().filter(n => window.elements?.[n]);
 
-    const s = loadSettings();
-    chipsWrap.innerHTML = "";
-
-    if (s.showFavorites) {
-      const favs = getFavs().filter(n => window.elements?.[n]);
-      chipsWrap.appendChild(el("div", {},
-        el("div", { class: "psoSectionTitle" }, "Favorites (right-click element to toggle)"),
-        el("div", { class: "psoChipRow" },
-          ...(favs.length ? favs.slice(0, 12).map(n => chip(prettyName(n), n)) : [el("div", { class: "psoSmall" }, "No favorites yet.")])
-        )
-      ));
-    }
-
-    if (s.showRecents) {
-      const rec = getRecents().filter(n => window.elements?.[n]).slice(0, 12);
-      chipsWrap.appendChild(el("div", {},
-        el("div", { class: "psoSectionTitle" }, "Recent"),
-        el("div", { class: "psoChipRow" },
-          ...(rec.length ? rec.map(n => chip(prettyName(n), n)) : [el("div", { class: "psoSmall" }, "No recents yet.")])
-        )
-      ));
-    }
-  }
-
-  function matchesCategory(name, def, catKey) {
-    if (catKey === "all") return true;
-    const c = def?.category || "other";
-    return String(c) === String(catKey);
+    if (currentTab === "fav") return favs;
+    if (currentTab === "recent") return rec;
+    if (currentCat === "all") return all;
+    return (byCat.get(currentCat) || []);
   }
 
   function renderElements() {
-    const list = $("#psoList");
-    if (!list) return;
+    const grid = $("#neo3ElGrid");
+    const count = $("#neo3Count");
+    if (!grid) return;
 
     const s = loadSettings();
-    if (!s.enableSidebar) { list.innerHTML = ""; return; }
-
-    const query = ($("#psoSearch")?.value || "").trim().toLowerCase();
+    const query = ($("#neo3Search")?.value || "").trim().toLowerCase();
     const favSet = new Set(getFavs());
 
-    const { all, byCat } = buildElementIndex();
+    const { all, byCat } = buildIndex();
+    let list = tabList({ all, byCat });
 
-    let candidates = [];
-    if (currentCategory === "all") candidates = all;
-    else candidates = (byCat.get(currentCategory) || []);
+    // if tab != all, still allow category filter
+    list = list.filter(n => {
+      const def = window.elements?.[n];
+      if (!def || def.hidden) return false;
+      return inCat(n, def);
+    });
 
-    // filter by search
     if (query) {
-      candidates = candidates.filter(n => {
-        const label = prettyName(n).toLowerCase();
-        return label.includes(query) || String(n).toLowerCase().includes(query);
+      list = list.filter(n => {
+        const disp = prettyName(n).toLowerCase();
+        return disp.includes(query) || String(n).toLowerCase().includes(query);
       });
     }
 
-    // show count
-    const sub = $("#psoSub");
-    if (sub) sub.textContent = `${candidates.length} shown • ${query ? "filtered" : (currentCategory === "all" ? "all categories" : "category")}`;
+    grid.innerHTML = "";
+    let shown = 0;
 
-    list.innerHTML = "";
-
-    for (const name of candidates) {
+    for (const name of list) {
       const def = window.elements?.[name];
       if (!def || def.hidden) continue;
 
-      const b = el("button", { class: "psoElBtn", "data-el": name });
-      const dot = el("span", { class: "psoDot", style: `background:${elementColor(name)}; width:12px; height:12px;` });
-      const nm = el("span", { class: "psoElName" }, prettyName(name));
+      const btn = el("button", { class: "neo3ElBtn", "data-el": name });
+      const dot = el("span", { class: "neo3Dot", style: `background:${elementColor(name)};` });
+      const nm = el("span", { class: "neo3Name" }, prettyName(name));
 
-      if (favSet.has(name)) b.appendChild(el("span", { class: "psoStar", title: "Favorited" }, "★"));
+      if (favSet.has(name)) btn.appendChild(el("span", { class: "neo3Star", title: "Favorite" }, "★"));
+      btn.append(dot, nm);
 
-      b.append(dot, nm);
-
-      b.onclick = () => {
+      btn.onclick = () => {
         window.selectElement?.(name);
-        setSidebarOpen(true);
+        toast(`Selected: ${prettyName(name)}`);
       };
 
-      // right click to favorite
-      b.addEventListener("contextmenu", (ev) => {
+      btn.addEventListener("contextmenu", (ev) => {
         ev.preventDefault();
         toggleFavorite(name);
       });
 
-      // tooltip on hover
-      if (s.showTooltips) {
-        b.addEventListener("mouseenter", (ev) => showTooltip(ev, name));
-        b.addEventListener("mousemove", (ev) => moveTooltip(ev));
-        b.addEventListener("mouseleave", () => hideTooltip());
-      }
+      // tooltip + preview on hover
+      btn.addEventListener("mouseenter", (ev) => { hovered = name; if (s.showTooltips) showTip(ev, name); updatePreview(name, true); });
+      btn.addEventListener("mousemove", (ev) => { if (s.showTooltips) moveTip(ev); });
+      btn.addEventListener("mouseleave", () => { hovered = null; hideTip(); if (currentSelected) updatePreview(currentSelected); });
 
-      list.appendChild(b);
+      grid.appendChild(btn);
+      shown++;
     }
+
+    if (count) count.textContent = `${shown} shown • right-click = favorite`;
+
+    // active tabs UI
+    $("#neo3TabAll")?.classList.toggle("active", currentTab === "all");
+    $("#neo3TabFav")?.classList.toggle("active", currentTab === "fav");
+    $("#neo3TabRec")?.classList.toggle("active", currentTab === "recent");
+
+    // preview visibility
+    $("#neo3Preview")?.classList.toggle("show", !!(s.showPreview));
   }
 
-  // ---------- Tooltip
-  function showTooltip(ev, name) {
+  function updatePreview(name, isHover = false) {
     const s = loadSettings();
-    if (!s.showTooltips) return;
-    const tip = $("#psoTip");
-    if (!tip) return;
+    const box = $("#neo3Preview");
+    if (!box || !s.showPreview) return;
 
     const def = window.elements?.[name];
-    const cat = def?.category ?? "—";
-    const state = def?.state ?? "—";
-    const dens = (typeof def?.density === "number") ? def.density : "—";
-    const visc = (typeof def?.viscosity === "number") ? def.viscosity : "—";
+    if (!def) {
+      box.innerHTML = `<div class="muted">Hover or select an element to see details.</div>`;
+      return;
+    }
 
-    tip.innerHTML = `<b>${prettyName(name)}</b> <span class="muted">(${name})</span><br>
-      <span class="muted">Category:</span> ${cat} &nbsp; <span class="muted">State:</span> ${state}<br>
-      <span class="muted">Density:</span> ${dens} &nbsp; <span class="muted">Viscosity:</span> ${visc}`;
+    const favSet = new Set(getFavs());
+    const cat = def.category ?? "—";
+    const state = def.state ?? "—";
+    const dens = (typeof def.density === "number") ? def.density : "—";
+    const visc = (typeof def.viscosity === "number") ? def.viscosity : "—";
+    const desc = def.desc || def.description || "";
 
-    tip.style.display = "block";
-    moveTooltip(ev);
+    box.innerHTML = `
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+        <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+          <span class="neo3Dot" style="background:${elementColor(name)};"></span>
+          <div style="min-width:0;">
+            <div style="font-weight:900; letter-spacing:.3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+              ${prettyName(name)} ${isHover ? '<span class="muted">(hover)</span>' : ''}
+            </div>
+            <div class="muted">${name}</div>
+          </div>
+        </div>
+        <button class="neo3Btn" id="neo3PrevFav">${favSet.has(name) ? "★" : "☆"}</button>
+      </div>
+      <div class="muted" style="margin-top:8px;">
+        Category: <b style="color:rgba(255,255,255,.92)">${cat}</b> • State: <b style="color:rgba(255,255,255,.92)">${state}</b><br>
+        Density: <b style="color:rgba(255,255,255,.92)">${dens}</b> • Viscosity: <b style="color:rgba(255,255,255,.92)">${visc}</b>
+      </div>
+      ${desc ? `<div class="muted" style="margin-top:8px;">${String(desc).slice(0, 260)}</div>` : ""}
+    `;
+
+    const favBtn = $("#neo3PrevFav");
+    if (favBtn) favBtn.onclick = () => toggleFavorite(name);
   }
 
-  function moveTooltip(ev) {
-    const tip = $("#psoTip");
+  // ---------- tooltip
+  function showTip(ev, name) {
+    const tip = $("#neo3Tip");
+    if (!tip) return;
+    const def = window.elements?.[name];
+    if (!def) return;
+
+    tip.innerHTML = `
+      <b>${prettyName(name)}</b> <span class="muted">(${name})</span><br>
+      <span class="muted">Category:</span> ${def.category ?? "—"} &nbsp; <span class="muted">State:</span> ${def.state ?? "—"}
+    `;
+    tip.style.display = "block";
+    moveTip(ev);
+  }
+  function moveTip(ev) {
+    const tip = $("#neo3Tip");
     if (!tip || tip.style.display === "none") return;
     const pad = 14;
-    const x = Math.min(window.innerWidth - 16, ev.clientX + pad);
-    const y = Math.min(window.innerHeight - 16, ev.clientY + pad);
-    tip.style.left = `${x}px`;
-    tip.style.top = `${y}px`;
+    tip.style.left = `${Math.min(window.innerWidth - 16, ev.clientX + pad)}px`;
+    tip.style.top  = `${Math.min(window.innerHeight - 16, ev.clientY + pad)}px`;
   }
-
-  function hideTooltip() {
-    const tip = $("#psoTip");
+  function hideTip() {
+    const tip = $("#neo3Tip");
     if (tip) tip.style.display = "none";
   }
 
-  // ---------- QoL Hotkeys
+  // ---------- resizing
+  function installResize(which) {
+    const drawer = which === "elements" ? $("#neo3Elements") : $("#neo3Overhaul");
+    const handle = which === "elements" ? $("#neo3ResE") : $("#neo3ResO");
+    if (!drawer || !handle) return;
+
+    let dragging = false;
+    let startX = 0;
+    let startW = 0;
+
+    handle.addEventListener("pointerdown", (ev) => {
+      dragging = true;
+      startX = ev.clientX;
+      const rect = drawer.getBoundingClientRect();
+      startW = rect.width;
+      handle.setPointerCapture(ev.pointerId);
+      ev.preventDefault();
+    });
+
+    window.addEventListener("pointermove", (ev) => {
+      if (!dragging) return;
+      const dx = ev.clientX - startX;
+
+      let w;
+      if (which === "elements") w = clamp(startW + dx, 320, 860);
+      else w = clamp(startW - dx, 320, 860);
+
+      if (which === "elements") {
+        localStorage.setItem(MOD.keys.widthElements, String(w));
+        document.body.style.setProperty("--neo-w-e", `${w}px`);
+      } else {
+        localStorage.setItem(MOD.keys.widthOverhaul, String(w));
+        document.body.style.setProperty("--neo-w-o", `${w}px`);
+      }
+    });
+
+    window.addEventListener("pointerup", () => { dragging = false; });
+    window.addEventListener("pointercancel", () => { dragging = false; });
+  }
+
+  // ---------- hotkeys (clear + simple)
   function installHotkeys() {
     window.addEventListener("keydown", (ev) => {
       const s = loadSettings();
       if (!s.hotkeys) return;
 
-      const active = document.activeElement;
-      const typing = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
+      const a = document.activeElement;
+      const typing = a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA");
 
-      // Focus search: / or Ctrl+K
+      // B toggles elements
+      if (!typing && ev.key.toLowerCase() === "b") {
+        ev.preventDefault();
+        setOpenElements(!isOpenElements());
+      }
+
+      // O toggles overhaul
+      if (!typing && ev.key.toLowerCase() === "o") {
+        ev.preventDefault();
+        setOpenOverhaul(!isOpenOverhaul());
+      }
+
+      // / focuses search
       if (!typing && ev.key === "/") {
         ev.preventDefault();
-        setSidebarOpen(true);
-        $("#psoSearch")?.focus();
-        $("#psoSearch")?.select();
-      }
-      if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "k") {
-        ev.preventDefault();
-        setSidebarOpen(true);
-        $("#psoSearch")?.focus();
-        $("#psoSearch")?.select();
+        setOpenElements(true);
+        $("#neo3Search")?.focus();
+        $("#neo3Search")?.select();
       }
 
-      // ESC clears search if focused
-      if (ev.key === "Escape" && active === $("#psoSearch")) {
+      // Ctrl+K focuses search
+      if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "k") {
         ev.preventDefault();
-        $("#psoSearch").value = "";
+        setOpenElements(true);
+        $("#neo3Search")?.focus();
+        $("#neo3Search")?.select();
+      }
+
+      // Esc clears search
+      if (ev.key === "Escape" && a === $("#neo3Search")) {
+        ev.preventDefault();
+        $("#neo3Search").value = "";
         renderElements();
-        $("#psoSearch").blur();
+        $("#neo3Search").blur();
       }
 
       // Q swaps last/current
       if (!typing && ev.key.toLowerCase() === "q" && lastSelected) {
         ev.preventDefault();
         window.selectElement?.(lastSelected);
-        toast(`Swapped to: ${prettyName(lastSelected)}`);
-      }
-
-      // Alt+1..9 = favorites
-      if (!typing && ev.altKey && /^[1-9]$/.test(ev.key)) {
-        const idx = parseInt(ev.key, 10) - 1;
-        const fav = getFavs().filter(n => window.elements?.[n])[idx];
-        if (fav) {
-          ev.preventDefault();
-          window.selectElement?.(fav);
-          toast(`Favorite: ${prettyName(fav)}`);
-        }
-      }
-
-      // Shift+1..9 = recents
-      if (!typing && ev.shiftKey && /^[1-9]$/.test(ev.key)) {
-        const idx = parseInt(ev.key, 10) - 1;
-        const rec = getRecents().filter(n => window.elements?.[n])[idx];
-        if (rec) {
-          ev.preventDefault();
-          window.selectElement?.(rec);
-          toast(`Recent: ${prettyName(rec)}`);
-        }
+        toast(`Swapped: ${prettyName(lastSelected)}`);
       }
     }, { passive: false });
   }
 
-  // ---------- Alt+Wheel brush size (best-effort)
-  function installAltWheelBrush() {
-    window.addEventListener("wheel", (ev) => {
-      const s = loadSettings();
-      if (!s.altWheelBrush) return;
-      if (!ev.altKey) return;
-
-      // only if over a canvas
-      const canvases = $$("canvas");
-      const canvas = canvases.sort((a, b) => (b.width*b.height) - (a.width*a.height))[0];
-      if (!canvas) return;
-      const r = canvas.getBoundingClientRect();
-      const inside = ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom;
-      if (!inside) return;
-
-      const key = (typeof window.mouseSize === "number") ? "mouseSize"
-               : (typeof window.brushSize === "number") ? "brushSize"
-               : null;
-      if (!key) return;
-
-      ev.preventDefault();
-      const cur = window[key];
-      const delta = ev.deltaY > 0 ? -1 : 1;
-      const next = clamp(cur + delta, 1, 200);
-      window[key] = next;
-      try { window.setSetting?.(key, next); } catch {}
-      toast(`Brush: ${next}`);
-    }, { passive: false });
-  }
-
-  // ---------- Canvas coordinate helpers (for pick/inspect)
-  function findMainCanvas() {
-    const canvases = $$("canvas");
-    if (!canvases.length) return null;
-    return canvases.sort((a, b) => (b.width*b.height) - (a.width*a.height))[0];
-  }
-
-  function screenToGrid(ev, canvas) {
-    const rect = canvas.getBoundingClientRect();
-    const rx = (ev.clientX - rect.left) / rect.width;
-    const ry = (ev.clientY - rect.top) / rect.height;
-
-    const px = clamp(rx * canvas.width, 0, canvas.width - 1);
-    const py = clamp(ry * canvas.height, 0, canvas.height - 1);
-
-    const ps = (typeof window.pixelSize === "number" && window.pixelSize > 0) ? window.pixelSize : 1;
-    return { gx: Math.floor(px / ps), gy: Math.floor(py / ps) };
-  }
-
-  // ---------- Alt+Middle pick
-  function installAltMiddlePick() {
-    window.addEventListener("pointerdown", (ev) => {
-      const s = loadSettings();
-      if (!s.altMiddlePick) return;
-      if (!ev.altKey) return;
-      if (ev.button !== 1) return; // middle click
-
-      const canvas = findMainCanvas();
-      if (!canvas) return;
-
-      const { gx, gy } = screenToGrid(ev, canvas);
-      const p = window.pixelMap?.[gx]?.[gy];
-      const name = p?.element;
-      if (name && window.elements?.[name]) {
-        window.selectElement?.(name);
-        toast(`Picked: ${prettyName(name)}`);
-        setSidebarOpen(true);
-      }
-    }, { passive: true });
-  }
-
-  // ---------- Alt+Click inspect
-  function installAltClickInspect() {
-    const boxId = "psoInspect";
-    if ($(`#${boxId}`)) return;
-    const box = el("div", {
-      id: boxId,
-      style: `
-        position: fixed; z-index: 999999; display:none;
-        padding: 8px 10px;
-        border-radius: 10px;
-        background: rgba(0,0,0,.88);
-        border: 2px solid rgba(255,255,255,.14);
-        color: rgba(255,255,255,.92);
-        box-shadow: 0 10px 24px rgba(0,0,0,.55);
-        font-size: 12px;
-        max-width: 380px;
-      `
-    });
-    document.body.appendChild(box);
-
-    window.addEventListener("pointerdown", (ev) => {
-      const s = loadSettings();
-      if (!s.altClickInspect) return;
-      if (!ev.altKey) return;
-      if (ev.button !== 0) return;
-
-      const canvas = findMainCanvas();
-      if (!canvas) return;
-
-      const { gx, gy } = screenToGrid(ev, canvas);
-      const p = window.pixelMap?.[gx]?.[gy];
-      const elName = p?.element || "empty";
-
-      box.innerHTML = `
-        <b>Pixel</b> <span style="opacity:.7;">(${gx}, ${gy})</span><br>
-        <span style="opacity:.7;">Element:</span> ${elName}<br>
-        ${p ? `
-          <span style="opacity:.7;">Temp:</span> ${typeof p.temp === "number" ? p.temp.toFixed(1) : "—"}<br>
-          <span style="opacity:.7;">Charge:</span> ${p.charge ?? "—"}<br>
-          <span style="opacity:.7;">Life:</span> ${p.life ?? "—"}
-        ` : `<span style="opacity:.7;">No pixel here.</span>`}
-      `;
-
-      const pad = 14;
-      box.style.left = `${Math.min(window.innerWidth - 16, ev.clientX + pad)}px`;
-      box.style.top  = `${Math.min(window.innerHeight - 16, ev.clientY + pad)}px`;
-      box.style.display = "block";
-      clearTimeout(installAltClickInspect._tm);
-      installAltClickInspect._tm = setTimeout(() => box.style.display = "none", 1600);
-    }, { passive: true });
-  }
-
-  // ---------- Tweaks/perf (safe-ish)
+  // ---------- tweaks/perf (safe-ish)
   function patchSmartHumans() {
     const e = window.elements;
-    if (!e?.human || e.human.__psoSmart || typeof e.human.tick !== "function") return;
-    e.human.__psoSmart = true;
+    if (!e?.human || e.human.__neo3Smart || typeof e.human.tick !== "function") return;
+    e.human.__neo3Smart = true;
 
     const old = e.human.tick;
     const danger = new Set(["fire","smoke","lava","magma","acid","acid_gas","explosion","radiation","plasma","napalm","greek_fire","nuke"]);
     const adj = window.adjacentCoords;
     const tryMove = window.tryMove;
-    const isEmpty = window.isEmpty;
 
     e.human.tick = function (pixel) {
       try {
         const pm = window.pixelMap;
-        if (!pm || !adj || !tryMove || !isEmpty) return old(pixel);
+        if (!pm || !adj || !tryMove) return old(pixel);
 
         let vx = 0, vy = 0, seen = 0;
         for (const [dx, dy] of adj) {
@@ -1132,7 +1196,6 @@ body.sbx-pso.pso-hide-vanilla #elementControls{
           const hot = typeof p2.temp === "number" && p2.temp > 250;
           if (danger.has(p2.element) || hot) { vx += dx; vy += dy; seen++; }
         }
-
         if (seen) {
           const ax = vx === 0 ? 0 : (vx > 0 ? -1 : 1);
           const ay = vy === 0 ? 0 : (vy > 0 ? -1 : 1);
@@ -1157,8 +1220,8 @@ body.sbx-pso.pso-hide-vanilla #elementControls{
     const targets = ["water","salt_water","dirty_water","steam","smoke","cloud"];
     for (const name of targets) {
       const def = e[name];
-      if (!def || def.__psoTrap || typeof def.tick !== "function") continue;
-      def.__psoTrap = true;
+      if (!def || def.__neo3Trap || typeof def.tick !== "function") continue;
+      def.__neo3Trap = true;
       const old = def.tick;
 
       def.tick = function (pixel) {
@@ -1185,10 +1248,10 @@ body.sbx-pso.pso-hide-vanilla #elementControls{
     if (!e || !adj) return;
 
     for (const [name, def] of Object.entries(e)) {
-      if (!def || def.__psoLazyGas || typeof def.tick !== "function") continue;
+      if (!def || def.__neo3LazyGas || typeof def.tick !== "function") continue;
       if (def.state !== "gas") continue;
 
-      def.__psoLazyGas = true;
+      def.__neo3LazyGas = true;
       const old = def.tick;
 
       def.tick = function (pixel) {
@@ -1209,59 +1272,78 @@ body.sbx-pso.pso-hide-vanilla #elementControls{
     }
   }
 
-  // ---------- Boot
+  // ---------- boot
   onGameReady(async () => {
-    // Wait for UI anchors
-    try { await waitFor(() => $("#toolControls")); } catch {}
+    cleanupOld();
+
     try { await waitFor(() => $("#controls")); } catch {}
+    try { await waitFor(() => $("#toolControls")); } catch {}
 
-    injectCss("psoStyle", cssPixel());
-    updateTopOffsetVar();
-    window.addEventListener("resize", updateTopOffsetVar);
-    setInterval(updateTopOffsetVar, 1000);
+    injectCss("neo3Style", cssNeo());
 
-    ensureCoreUI();
-    addHamburgerButton();
+    const s = loadSettings();
+    if (!s.enable) return;
+
+    ensureUI();
+    addTopButtons();
+
+    // top offset (important because your UI has 2 rows)
+    updateTopOffset();
+    window.addEventListener("resize", updateTopOffset);
+    setInterval(updateTopOffset, 1200);
 
     hookSelectElement();
 
-    buildSettingsPanel();
-    renderCategories();
-    renderChips();
+    // apply styles / hide vanilla
+    document.body.classList.toggle("neo-topstyle", !!s.restyleTopUI);
+    document.body.classList.toggle("neo-hide-vanilla", !!s.hideVanillaElementUI);
+
+    // build panels + render
+    buildOverhaulPanel();
+    setTab(currentTab);
+    setCat(currentCat);
+    renderCats();
     renderElements();
+    updatePreview(currentSelected || hovered || null);
 
-    const s = loadSettings();
-    applyHideVanilla();
-
-    // open by default
-    if (s.enableSidebar) {
-      const hasPref = localStorage.getItem(MOD.keys.sidebarOpen) != null;
-      if (!hasPref) localStorage.setItem(MOD.keys.sidebarOpen, s.sidebarOpenByDefault ? "1" : "0");
-      setSidebarOpen(isSidebarOpen());
+    // restore open states
+    if (localStorage.getItem(MOD.keys.openElements) == null) {
+      localStorage.setItem(MOD.keys.openElements, s.openElementsOnStart ? "1" : "0");
+    }
+    if (localStorage.getItem(MOD.keys.openOverhaul) == null) {
+      localStorage.setItem(MOD.keys.openOverhaul, "0");
     }
 
-    // Hooks
-    if (s.hotkeys) installHotkeys();
-    if (s.altWheelBrush) installAltWheelBrush();
-    if (s.altMiddlePick) installAltMiddlePick();
-    if (s.altClickInspect) installAltClickInspect();
+    $("#neo3Elements")?.classList.toggle("open", isOpenElements());
+    $("#neo3Overhaul")?.classList.toggle("open", isOpenOverhaul());
+    setMax("elements", isMax("elements"));
+    setMax("overhaul", isMax("overhaul"));
+    syncOverlay();
+    syncEdgeTabs();
 
-    // Tweaks/perf
+    // resizing
+    installResize("elements");
+    installResize("overhaul");
+
+    // hotkeys
+    if (s.hotkeys) installHotkeys();
+
+    // tweaks/perf
     if (s.smartHumans) patchSmartHumans();
     if (s.trappedSkipFluids) patchTrappedSkipFluids();
     if (s.lazyGases) patchLazyGases();
 
-    // Re-render when elements are changed by other mods
+    // keep in sync if other mods add/remove elements UI
     const ec = $("#elementControls");
     if (ec) {
       const mo = new MutationObserver(() => {
-        // categories might have changed (mods/language)
-        renderCategories();
-        renderChips();
+        renderCats();
         renderElements();
       });
       mo.observe(ec, { childList: true, subtree: true });
     }
+
+    toast(`${MOD.name} loaded`);
   });
 
 })();
