@@ -1,101 +1,80 @@
-// sbx_overhaul_plus.js
-// Sandboxels Overhaul+ (clean UI + lots of QoL + safe behavior/perf tweaks)
+// sbx_pixel_sidebar_overhaul.js
+// Pixel Sidebar Overhaul: left element bar w/ scroll + search + categories + pixel-style UI + QoL
 
 (() => {
   "use strict";
 
   const MOD = {
-    name: "Overhaul+",
-    version: "0.6.0",
+    name: "Pixel Sidebar Overhaul",
+    version: "1.0.0",
     keys: {
-      settings: "sbx_ohp/settings",
-      favorites: "sbx_ohp/favorites",
-      recents: "sbx_ohp/recents",
+      settings: "sbx_pso/settings",
+      favorites: "sbx_pso/favorites",
+      recents: "sbx_pso/recents",
+      sidebarOpen: "sbx_pso/sidebar_open",
     },
     defaults: {
       // UI
-      skin: true,
-      search: true,
-      favorites: true,
-      recents: true,
-      speed: true,
-      tooltips: true,
-      compactMode: true,
+      enableSidebar: true,
+      hideVanillaElementUI: true,
+      sidebarOpenByDefault: true,
+      showFavorites: true,
+      showRecents: true,
+      showTooltips: true,
 
       // QoL
-      hotkeys: true,
-      wheelBrush: true,
-      inspector: true,
+      hotkeys: true,        // / or Ctrl+K search, Q swap last, Alt+1..9 favs, Shift+1..9 recents
+      altWheelBrush: true,  // Alt+mousewheel changes brush size (if supported by game)
+      altMiddlePick: true,  // Alt+MiddleClick canvas to pick element under cursor
+      altClickInspect: true,// Alt+Click canvas to inspect pixel
       toasts: true,
 
-      // Tweaks / perf
+      // Tweaks/perf (safe-ish)
       smartHumans: true,
-      trappedSkip: true,
+      trappedSkipFluids: true,
       lazyGases: true,
     },
   };
 
   const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
-  const log = (...a) => console.log(`[${MOD.name}]`, ...a);
-
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
-  function safeJsonParse(s, fallback) {
-    try { return JSON.parse(s); } catch { return fallback; }
-  }
-
+  function safeParse(s, fallback) { try { return JSON.parse(s); } catch { return fallback; } }
   function loadSettings() {
-    const stored = safeJsonParse(localStorage.getItem(MOD.keys.settings) || "{}", {});
-    return { ...MOD.defaults, ...stored };
+    return { ...MOD.defaults, ...(safeParse(localStorage.getItem(MOD.keys.settings) || "{}", {})) };
   }
-  function saveSettings(next) {
-    localStorage.setItem(MOD.keys.settings, JSON.stringify(next));
-  }
+  function saveSettings(s) { localStorage.setItem(MOD.keys.settings, JSON.stringify(s)); }
 
   function loadList(key) {
-    const arr = safeJsonParse(localStorage.getItem(key) || "[]", []);
+    const arr = safeParse(localStorage.getItem(key) || "[]", []);
     return Array.isArray(arr) ? arr.filter(Boolean) : [];
   }
-  function saveList(key, arr) {
-    localStorage.setItem(key, JSON.stringify(arr));
+  function saveList(key, arr, cap) {
+    const out = (cap ? arr.slice(0, cap) : arr);
+    localStorage.setItem(key, JSON.stringify(out));
   }
 
   function el(tag, attrs = {}, ...children) {
-    const node = document.createElement(tag);
+    const n = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs)) {
-      if (k === "class") node.className = v;
-      else if (k === "style") node.setAttribute("style", v);
-      else if (k.startsWith("on") && typeof v === "function") node.addEventListener(k.slice(2), v);
-      else node.setAttribute(k, v);
+      if (k === "class") n.className = v;
+      else if (k === "style") n.setAttribute("style", v);
+      else if (k.startsWith("on") && typeof v === "function") n.addEventListener(k.slice(2), v);
+      else if (v != null) n.setAttribute(k, String(v));
     }
     for (const c of children) {
       if (c == null) continue;
-      node.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+      n.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
     }
-    return node;
+    return n;
   }
 
   function injectCss(id, cssText) {
     $(`#${id}`)?.remove();
-    const style = el("style", { id });
-    style.textContent = cssText;
-    document.head.appendChild(style);
-  }
-
-  function waitFor(fn, timeoutMs = 15000) {
-    return new Promise((resolve, reject) => {
-      const start = performance.now();
-      const t = setInterval(() => {
-        try {
-          const val = fn();
-          if (val) { clearInterval(t); resolve(val); }
-          else if (performance.now() - start > timeoutMs) { clearInterval(t); reject(new Error("timeout")); }
-        } catch {
-          if (performance.now() - start > timeoutMs) { clearInterval(t); reject(new Error("timeout")); }
-        }
-      }, 50);
-    });
+    const st = el("style", { id });
+    st.textContent = cssText;
+    document.head.appendChild(st);
   }
 
   function onGameReady(fn) {
@@ -104,812 +83,555 @@
     else window.addEventListener("load", fn, { once: true });
   }
 
-  // ---------- Cleanup old versions (prevents doubled bars / weird CSS stacking)
-  function cleanupOld() {
-    [
-      "sbxOverhaulStyle", "sbxOverhaulPanel", "sbxOverhaulBar", "sbxOverhaulTooltip", "sbxOverhaulBtn",
-      "sbxOverhaulStyle2", "sbxOHStyle", "sbxOHBar", "sbxOHPanel", "sbxOHTooltip", "sbxOHToast", "sbxOHInspect"
-    ].forEach(id => $(`#${id}`)?.remove());
-    document.body?.classList?.remove("sbx-overhaul", "sbx-ohp");
+  function waitFor(fn, timeoutMs = 15000) {
+    return new Promise((resolve, reject) => {
+      const start = performance.now();
+      const t = setInterval(() => {
+        let val = null;
+        try { val = fn(); } catch {}
+        if (val) { clearInterval(t); resolve(val); }
+        else if (performance.now() - start > timeoutMs) { clearInterval(t); reject(new Error("timeout")); }
+      }, 50);
+    });
   }
 
-  // ---------- UI Skin (much less global, more consistent)
-  function cssSkin() {
+  // ---------- Visual style (pixel/bevel to match Sandboxels)
+  function cssPixel() {
     return `
-/* ===== Overhaul+ (scoped) ===== */
-body.sbx-ohp{
-  --ohp-bg: rgba(14,16,20,.92);
-  --ohp-panel: rgba(18,21,28,.92);
-  --ohp-border: rgba(255,255,255,.12);
-  --ohp-border2: rgba(255,255,255,.08);
-  --ohp-text: rgba(255,255,255,.92);
-  --ohp-muted: rgba(255,255,255,.62);
-  --ohp-accent: rgba(76,201,240,.90);
-  --ohp-accent2: rgba(167,139,250,.85);
-  --ohp-radius: 14px;
-  --ohp-shadow: 0 14px 44px rgba(0,0,0,.45);
+/* ===== Pixel Sidebar Overhaul (scoped) ===== */
+body.sbx-pso{
+  --pso-bg: rgba(10,10,10,.88);
+  --pso-panel: rgba(20,20,20,.92);
+  --pso-border: rgba(255,255,255,.18);
+  --pso-border2: rgba(255,255,255,.10);
+  --pso-text: rgba(255,255,255,.92);
+  --pso-muted: rgba(255,255,255,.65);
+  --pso-shadow: 0 10px 24px rgba(0,0,0,.55);
+  --pso-top: 54px;
+  --pso-w: 300px;
 }
 
-/* Only lightly reskin the top tool buttons (no menu/tab surgery) */
-body.sbx-ohp #toolControls .controlButton{
-  border-radius: 999px !important;
-  border: 1px solid var(--ohp-border2) !important;
-  background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04)) !important;
-  box-shadow: 0 6px 16px rgba(0,0,0,.25);
-  transition: transform .06s ease, filter .12s ease;
+/* Optional: hide vanilla category+element rows */
+body.sbx-pso.pso-hide-vanilla #categoryControls,
+body.sbx-pso.pso-hide-vanilla #elementControls{
+  display:none !important;
 }
-body.sbx-ohp #toolControls .controlButton:hover{ filter: brightness(1.08); }
-body.sbx-ohp #toolControls .controlButton:active{ transform: translateY(1px); }
 
-/* New bar */
-#sbxOHBar{
-  margin: 6px 0 8px 0;
-  border-radius: var(--ohp-radius);
-  border: 1px solid var(--ohp-border);
-  background: var(--ohp-panel);
-  box-shadow: var(--ohp-shadow);
+/* Hamburger button fits in the top pixel UI (uses game's controlButton class) */
+#psoHamburger.controlButton{
+  min-width: 44px;
+  padding-left: 12px !important;
+  padding-right: 12px !important;
+  font-weight: 700;
+}
+
+/* Sidebar + overlay */
+#psoOverlay{
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.35);
+  z-index: 999990;
+  display:none;
+}
+#psoOverlay.open{ display:block; }
+
+#psoSidebar{
+  position: fixed;
+  left: 8px;
+  top: calc(var(--pso-top) + 6px);
+  height: calc(100vh - var(--pso-top) - 14px);
+  width: var(--pso-w);
+  z-index: 999991;
+  color: var(--pso-text);
+
+  background: linear-gradient(180deg, rgba(30,30,30,.94), rgba(14,14,14,.92));
+  border: 2px solid rgba(255,255,255,.18);
+  box-shadow: var(--pso-shadow);
+  border-radius: 10px;
+
+  display:flex;
+  flex-direction: column;
+
+  transform: translateX(calc(-1 * (var(--pso-w) + 16px)));
+  transition: transform 160ms ease;
+}
+#psoSidebar.open{ transform: translateX(0); }
+
+/* Header */
+#psoHeader{
+  display:flex;
+  align-items:center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 10px 10px 8px 10px;
-}
-#sbxOHBar.compact{
-  padding: 8px 8px 6px 8px;
-}
 
-.sbxOHRow{
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
+  border-bottom: 2px solid rgba(255,255,255,.10);
+  background: rgba(0,0,0,.22);
 }
-.sbxOHRow + .sbxOHRow{ margin-top: 8px; }
-
-.sbxOHLeftGrow{ flex: 1 1 260px; min-width: 240px; }
-
-.sbxOHSearchWrap{
+#psoHeaderTitle{
   display:flex;
-  align-items:center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--ohp-border2);
-  background: rgba(255,255,255,.05);
+  flex-direction: column;
+  gap: 2px;
 }
-#sbxOHSearch{
-  flex:1;
-  min-width: 140px;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--ohp-text);
+#psoHeaderTitle .title{
+  font-weight: 700;
+  letter-spacing: .5px;
 }
-#sbxOHSearch::placeholder{ color: var(--ohp-muted); }
-.sbxOHIconBtn{
-  width: 30px;
-  height: 30px;
-  border-radius: 999px;
-  border: 1px solid var(--ohp-border2);
-  background: rgba(255,255,255,.06);
-  color: var(--ohp-text);
-  cursor: pointer;
-  user-select: none;
-}
-.sbxOHIconBtn:hover{ filter: brightness(1.10); }
-
-.sbxOHGroup{
-  display:flex;
-  align-items:center;
-  gap: 6px;
-  padding: 6px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--ohp-border2);
-  background: rgba(255,255,255,.04);
-}
-.sbxOHLabel{
+#psoHeaderTitle .sub{
   font-size: 12px;
-  color: var(--ohp-muted);
-  user-select: none;
-  margin-right: 2px;
+  color: var(--pso-muted);
 }
-#sbxOHTps{
-  width: 62px;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--ohp-text);
-  text-align: center;
+.psoHdrBtns{ display:flex; gap:6px; }
+
+.psoBtn{
+  cursor:pointer;
+  user-select:none;
+  color: var(--pso-text);
+  background: linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.04));
+  border: 2px solid rgba(255,255,255,.14);
+  border-radius: 8px;
+  padding: 6px 8px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
 }
-.sbxOHMiniBtn{
-  width: 26px;
-  height: 26px;
+.psoBtn:hover{ filter: brightness(1.08); }
+.psoBtn:active{ transform: translateY(1px); }
+
+/* Search row */
+#psoSearchRow{
+  padding: 8px 10px;
+  border-bottom: 2px solid rgba(255,255,255,.08);
+  display:flex;
+  gap: 8px;
+  align-items:center;
+}
+#psoSearch{
+  flex:1;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 2px solid rgba(255,255,255,.14);
+  background: rgba(0,0,0,.35);
+  color: var(--pso-text);
+  outline:none;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+}
+#psoSearch::placeholder{ color: var(--pso-muted); }
+
+/* Category bar */
+#psoCats{
+  padding: 8px 10px 6px 10px;
+  border-bottom: 2px solid rgba(255,255,255,.08);
+  display:flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+#psoCats::-webkit-scrollbar{ height: 8px; }
+#psoCats::-webkit-scrollbar-thumb{ background: rgba(255,255,255,.14); border-radius: 999px; }
+.psoCat{
+  white-space: nowrap;
   border-radius: 999px;
-  border: 1px solid var(--ohp-border2);
-  background: rgba(255,255,255,.06);
-  color: var(--ohp-text);
-  cursor: pointer;
+  padding: 5px 10px;
+  border: 2px solid rgba(255,255,255,.12);
+  background: rgba(0,0,0,.22);
+  color: var(--pso-text);
+  cursor:pointer;
+}
+.psoCat.active{
+  border-color: rgba(255,255,255,.30);
+  background: rgba(255,255,255,.10);
 }
 
-.sbxOHChips{
+/* Chips (favorites/recents) */
+#psoChips{
+  padding: 8px 10px 0 10px;
+  display:flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.psoSectionTitle{
+  font-size: 12px;
+  color: var(--pso-muted);
+  margin-bottom: 4px;
+}
+.psoChipRow{
   display:flex;
   gap: 6px;
   flex-wrap: wrap;
-  align-items: center;
+  max-height: 64px;
+  overflow:auto;
+  padding-bottom: 4px;
 }
-.sbxOHChip{
+.psoChipRow::-webkit-scrollbar{ height: 8px; width: 8px; }
+.psoChipRow::-webkit-scrollbar-thumb{ background: rgba(255,255,255,.14); border-radius: 999px; }
+
+.psoChip{
   display:flex;
-  align-items:center;
   gap: 8px;
-  max-width: 210px;
-  padding: 6px 10px;
+  align-items:center;
+  max-width: 240px;
+  padding: 5px 10px;
   border-radius: 999px;
-  border: 1px solid var(--ohp-border2);
-  background: rgba(255,255,255,.06);
-  color: var(--ohp-text);
-  cursor: pointer;
-  user-select:none;
+  border: 2px solid rgba(255,255,255,.12);
+  background: rgba(0,0,0,.20);
+  cursor:pointer;
 }
-.sbxOHChip:hover{ filter: brightness(1.12); }
-.sbxOHDot{
-  width: 9px; height: 9px;
+.psoDot{
+  width: 9px;
+  height: 9px;
   border-radius: 999px;
-  box-shadow: inset 0 0 0 2px rgba(0,0,0,.18);
+  box-shadow: inset 0 0 0 2px rgba(0,0,0,.25);
 }
-.sbxOHChipTxt{
+.psoChipTxt{
   overflow:hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.sbxOHSectionTitle{
+/* Element list */
+#psoListWrap{
+  flex: 1;
+  padding: 10px;
+  overflow: hidden;
+}
+#psoList{
+  height: 100%;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding-right: 4px;
+}
+#psoList::-webkit-scrollbar{ width: 10px; }
+#psoList::-webkit-scrollbar-thumb{ background: rgba(255,255,255,.14); border-radius: 999px; }
+
+.psoElBtn{
+  position: relative;
+  display:flex;
+  align-items:center;
+  gap: 10px;
+
+  border-radius: 10px;
+  padding: 8px 10px;
+  cursor:pointer;
+
+  color: var(--pso-text);
+  border: 2px solid rgba(255,255,255,.12);
+  background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+  user-select:none;
+}
+.psoElBtn:hover{ filter: brightness(1.10); }
+.psoElBtn:active{ transform: translateY(1px); }
+
+.psoElName{
+  overflow:hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.psoStar{
+  position:absolute;
+  top: 6px;
+  right: 8px;
   font-size: 12px;
-  color: var(--ohp-muted);
-  margin: 2px 6px 0 4px;
-  user-select: none;
+  opacity: .85;
 }
 
 /* Tooltip */
-#sbxOHTooltip{
+#psoTip{
   position: fixed;
   z-index: 999999;
   pointer-events: none;
-  border-radius: 12px;
-  border: 1px solid var(--ohp-border);
-  background: rgba(12,14,18,.94);
-  color: var(--ohp-text);
-  box-shadow: var(--ohp-shadow);
-  padding: 8px 10px;
-  max-width: 360px;
   display:none;
+  max-width: 360px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(0,0,0,.88);
+  border: 2px solid rgba(255,255,255,.14);
+  color: var(--pso-text);
+  box-shadow: var(--pso-shadow);
   font-size: 12px;
 }
-#sbxOHTooltip .muted{ color: var(--ohp-muted); }
-#sbxOHTooltip b{ color: rgba(255,255,255,.98); }
+#psoTip .muted{ color: var(--pso-muted); }
 
-/* Panel */
-#sbxOHPanel{
+/* Settings panel (scrollable, fits screen) */
+#psoSettings{
   position: fixed;
-  right: 14px; top: 14px;
-  width: 360px; max-width: calc(100vw - 28px);
-  z-index: 999998;
-  border-radius: 16px;
-  border: 1px solid var(--ohp-border);
-  background: rgba(18,21,28,.96);
-  box-shadow: var(--ohp-shadow);
-  color: var(--ohp-text);
-  padding: 12px;
+  right: 10px;
+  top: calc(var(--pso-top) + 6px);
+  z-index: 999992;
+
+  width: 360px;
+  max-width: calc(100vw - 20px);
+  max-height: calc(100vh - var(--pso-top) - 14px);
+  overflow: auto;
+
   display:none;
+  background: linear-gradient(180deg, rgba(30,30,30,.94), rgba(14,14,14,.92));
+  border: 2px solid rgba(255,255,255,.18);
+  border-radius: 10px;
+  box-shadow: var(--pso-shadow);
+  color: var(--pso-text);
 }
-.sbxOHToggle{
+#psoSettings.open{ display:block; }
+
+#psoSettingsHeader{
+  position: sticky;
+  top: 0;
+  background: rgba(0,0,0,.22);
+  border-bottom: 2px solid rgba(255,255,255,.10);
+  padding: 10px;
+  display:flex;
+  justify-content: space-between;
+  align-items:center;
+  gap: 8px;
+}
+#psoSettingsBody{ padding: 10px; }
+.psoToggle{
   display:flex;
   gap: 10px;
   align-items:flex-start;
-  padding: 8px 8px;
-  border-radius: 12px;
-  cursor: pointer;
+  padding: 8px;
+  border-radius: 10px;
+  cursor:pointer;
 }
-.sbxOHToggle:hover{ background: rgba(255,255,255,.04); }
-.sbxOHToggle input{ margin-top: 3px; }
-.sbxOHSmall{ font-size: 12px; color: var(--ohp-muted); }
-
-/* Toast */
-#sbxOHToast{
+.psoToggle:hover{ background: rgba(255,255,255,.05); }
+.psoSmall{ font-size: 12px; color: var(--pso-muted); }
+#psoToast{
   position: fixed;
-  left: 12px; bottom: 12px;
+  left: 10px;
+  bottom: 10px;
   z-index: 999999;
+  display:none;
+
   padding: 8px 10px;
-  border-radius: 12px;
-  border: 1px solid var(--ohp-border);
-  background: rgba(12,14,18,.92);
-  color: var(--ohp-text);
-  box-shadow: var(--ohp-shadow);
-  display:none;
+  border-radius: 10px;
+  background: rgba(0,0,0,.88);
+  border: 2px solid rgba(255,255,255,.14);
+  color: var(--pso-text);
+  box-shadow: var(--pso-shadow);
   font-size: 12px;
 }
-
-/* Inspector */
-#sbxOHInspect{
-  position: fixed;
-  z-index: 999999;
-  border-radius: 14px;
-  border: 1px solid var(--ohp-border);
-  background: rgba(12,14,18,.94);
-  color: var(--ohp-text);
-  box-shadow: var(--ohp-shadow);
-  padding: 10px 12px;
-  display:none;
-  font-size: 12px;
-  max-width: 380px;
-}
-#sbxOHInspect .muted{ color: var(--ohp-muted); }
 `;
   }
 
-  // ---------- Toast
-  let toastTimer = null;
-  function toast(msg) {
-    const settings = loadSettings();
-    if (!settings.toasts) return;
+  // ---------- State
+  let currentCategory = "all";
+  let lastSelected = null;
+  let currentSelected = null;
 
-    const t = $("#sbxOHToast");
+  function getFavs() { return loadList(MOD.keys.favorites); }
+  function setFavs(a) { saveList(MOD.keys.favorites, a, 30); }
+  function getRecents() { return loadList(MOD.keys.recents); }
+  function setRecents(a) { saveList(MOD.keys.recents, a, 18); }
+
+  function toast(msg) {
+    const s = loadSettings();
+    if (!s.toasts) return;
+    const t = $("#psoToast");
     if (!t) return;
     t.textContent = msg;
     t.style.display = "block";
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => (t.style.display = "none"), 1300);
+    clearTimeout(toast._tm);
+    toast._tm = setTimeout(() => (t.style.display = "none"), 1300);
   }
 
-  // ---------- Element helpers
-  function elementNameFromButton(btn) {
-    return btn?.getAttribute?.("element") || btn?.id?.replace?.("elementButton-", "") || null;
-  }
-  function allElementButtons() {
-    return $$(".elementButton").filter(b => b.id && b.id.startsWith("elementButton-"));
-  }
   function elementColor(name) {
-    const e = window.elements?.[name];
-    if (!e) return null;
-    const c = e.color;
-    if (Array.isArray(c)) return c[0];
+    const def = window.elements?.[name];
+    if (!def) return "rgba(255,255,255,.35)";
+    const c = def.color;
+    if (Array.isArray(c) && c.length) return c[0];
     if (typeof c === "string") return c;
-    return null;
+    return "rgba(255,255,255,.35)";
   }
 
-  // ---------- Favorites / Recents
-  function getFavs() { return loadList(MOD.keys.favorites); }
-  function setFavs(arr) { saveList(MOD.keys.favorites, arr.slice(0, 30)); }
-
-  function getRecents() { return loadList(MOD.keys.recents); }
-  function setRecents(arr) { saveList(MOD.keys.recents, arr.slice(0, 18)); }
-
-  function toggleFavorite(name) {
-    if (!name) return;
-    const favs = getFavs();
-    const i = favs.indexOf(name);
-    if (i >= 0) { favs.splice(i, 1); toast(`Unfavorited: ${name}`); }
-    else { favs.unshift(name); toast(`Favorited: ${name}`); }
-    setFavs(favs);
+  function prettyName(name) {
+    const def = window.elements?.[name];
+    // many mods/games store display name here; if not, fallback
+    const candidate = def?.name || def?.displayName || def?.label;
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+    return String(name).replace(/_/g, " ");
   }
 
-  function pushRecent(name) {
-    if (!name) return;
-    const r = getRecents();
-    const next = [name, ...r.filter(x => x !== name)];
-    setRecents(next);
-  }
-
-  function markFavoriteButtons() {
-    const favSet = new Set(getFavs());
-    for (const btn of allElementButtons()) {
-      const name = elementNameFromButton(btn);
-      if (!name) continue;
-      if (favSet.has(name)) {
-        btn.style.outline = "2px solid rgba(76,201,240,.65)";
-        btn.style.outlineOffset = "2px";
-      } else {
-        btn.style.outline = "";
-        btn.style.outlineOffset = "";
+  function categoriesFromDOMOrFallback() {
+    // Try to match language + order by reading existing category buttons
+    const domBtns = $$(".categoryButton").filter(b => b.textContent && b.textContent.trim());
+    const out = [];
+    const seen = new Set();
+    for (const b of domBtns) {
+      const key =
+        b.getAttribute("category") ||
+        b.getAttribute("data-category") ||
+        (b.id?.startsWith("categoryButton-") ? b.id.replace("categoryButton-", "") : null) ||
+        b.textContent.trim().toLowerCase().replace(/\s+/g, "_");
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push({ key, label: b.textContent.trim() });
+    }
+    // Fallback: build from elements
+    if (!out.length && window.elements) {
+      const cats = new Map();
+      for (const [name, def] of Object.entries(window.elements)) {
+        if (!def || def.hidden) continue;
+        const c = def.category || "other";
+        cats.set(c, c);
       }
+      return [...cats.keys()].sort().map(c => ({ key: c, label: String(c).toUpperCase() }));
     }
+    return out;
   }
 
-  // ---------- Search filter
-  function filterElements(query) {
-    const q = (query || "").trim().toLowerCase();
-    const buttons = allElementButtons();
-    if (!q) { for (const b of buttons) b.style.display = ""; return; }
-    for (const b of buttons) {
-      const name = (elementNameFromButton(b) || "").toLowerCase();
-      b.style.display = name.includes(q) ? "" : "none";
+  function buildElementIndex() {
+    const byCat = new Map();
+    const all = [];
+    if (!window.elements) return { byCat, all };
+
+    for (const [name, def] of Object.entries(window.elements)) {
+      if (!def || def.hidden) continue;
+      const cat = def.category || "other";
+      if (!byCat.has(cat)) byCat.set(cat, []);
+      byCat.get(cat).push(name);
+      all.push(name);
     }
+
+    // Stable sort by display name
+    const nameSort = (a, b) => prettyName(a).localeCompare(prettyName(b));
+    for (const [k, arr] of byCat.entries()) arr.sort(nameSort);
+    all.sort(nameSort);
+
+    return { byCat, all };
   }
 
-  // ---------- UI build
-  function buildBar() {
-    const settings = loadSettings();
-    if (!$("#controls") || $("#sbxOHBar")) return;
-
-    const bar = el("div", { id: "sbxOHBar", class: settings.compactMode ? "compact" : "" });
-
-    // Row 1: search + speed + settings
-    const row1 = el("div", { class: "sbxOHRow" });
-
-    // Search
-    let searchInput = null;
-    if (settings.search) {
-      searchInput = el("input", {
-        id: "sbxOHSearch",
-        type: "text",
-        placeholder: "Search elements…  (Ctrl+K / /)",
-        oninput: () => filterElements(searchInput.value),
-      });
-
-      const clearBtn = el("button", {
-        class: "sbxOHIconBtn",
-        title: "Clear search (Esc)",
-        onclick: () => {
-          searchInput.value = "";
-          filterElements("");
-          searchInput.focus();
-        }
-      }, "×");
-
-      const searchWrap = el("div", { class: "sbxOHSearchWrap sbxOHLeftGrow" }, searchInput, clearBtn);
-      row1.appendChild(searchWrap);
-    } else {
-      row1.appendChild(el("div", { class: "sbxOHLeftGrow" }));
-    }
-
-    // TPS controls
-    if (settings.speed) {
-      const minus = el("button", { class: "sbxOHMiniBtn", title: "TPS -5 (Alt+-)" }, "−");
-      const plus  = el("button", { class: "sbxOHMiniBtn", title: "TPS +5 (Alt+=)" }, "+");
-      const input = el("input", { id: "sbxOHTps", type: "number", min: "1", max: "1000", value: "" });
-
-      function getTPS() {
-        if (typeof window.tps === "number") return window.tps;
-        return parseInt(input.value || "30", 10);
-      }
-      function setTPS(n) {
-        n = clamp(Math.abs(parseInt(n || "30", 10)), 1, 1000);
-        input.value = String(n);
-        if (typeof window.setTPS === "function") window.setTPS(n);
-      }
-
-      // init
-      input.value = (typeof window.tps === "number") ? String(window.tps) : "30";
-
-      minus.onclick = () => setTPS(getTPS() - 5);
-      plus.onclick = () => setTPS(getTPS() + 5);
-      input.onchange = () => setTPS(input.value);
-      input.onkeydown = (ev) => { if (ev.key === "Enter") input.blur(); };
-
-      const tpsGroup = el("div", { class: "sbxOHGroup" },
-        el("span", { class: "sbxOHLabel" }, "TPS"),
-        minus, input, plus
-      );
-      row1.appendChild(tpsGroup);
-    }
-
-    // Settings button
-    const gear = el("button", { class: "sbxOHIconBtn", title: "Overhaul+ settings" }, "⚙");
-    gear.onclick = () => togglePanel();
-    row1.appendChild(gear);
-
-    // Row 2: favorites + recents
-    const row2 = el("div", { class: "sbxOHRow" });
-
-    const favBlock = el("div", { style: "display:flex; flex-direction:column; gap:6px; flex: 1 1 340px; min-width: 260px;" });
-    const recBlock = el("div", { style: "display:flex; flex-direction:column; gap:6px; flex: 1 1 340px; min-width: 260px;" });
-
-    const favTitle = el("div", { class: "sbxOHSectionTitle" }, "Favorites (right-click or long-press an element button)");
-    const favChips = el("div", { class: "sbxOHChips", id: "sbxOHFavChips" });
-    favBlock.appendChild(favTitle);
-    favBlock.appendChild(favChips);
-
-    const recTitle = el("div", { class: "sbxOHSectionTitle" }, "Recent");
-    const recChips = el("div", { class: "sbxOHChips", id: "sbxOHRecChips" });
-    recBlock.appendChild(recTitle);
-    recBlock.appendChild(recChips);
-
-    if (settings.favorites) row2.appendChild(favBlock);
-    if (settings.recents) row2.appendChild(recBlock);
-
-    bar.appendChild(row1);
-    if (settings.favorites || settings.recents) bar.appendChild(row2);
-
-    // Insert above category controls
-    const controls = $("#controls");
-    const categoryControls = $("#categoryControls");
-    if (controls && categoryControls) controls.insertBefore(bar, categoryControls);
-    else controls?.prepend(bar);
-
-    // Hotkeys: Ctrl+K + / + Esc
-    if (settings.search && settings.hotkeys) {
-      window.addEventListener("keydown", (ev) => {
-        const active = document.activeElement;
-        const typing = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
-
-        if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "k") {
-          ev.preventDefault();
-          searchInput?.focus(); searchInput?.select();
-        }
-        if (!typing && ev.key === "/") {
-          ev.preventDefault();
-          searchInput?.focus(); searchInput?.select();
-        }
-        if (ev.key === "Escape" && active === searchInput) {
-          searchInput.value = "";
-          filterElements("");
-          searchInput.blur();
-        }
-      }, { passive: false });
-    }
-
-    renderChips();
+  // ---------- UI Build
+  function updateTopOffsetVar() {
+    const tc = $("#toolControls");
+    const rect = tc?.getBoundingClientRect?.();
+    const top = rect ? Math.round(rect.bottom + 6) : 54;
+    document.body.style.setProperty("--pso-top", `${top}px`);
   }
 
-  function chipButton(name, kind) {
-    const dot = el("span", {
-      class: "sbxOHDot",
-      style: `background:${elementColor(name) || "rgba(255,255,255,.35)"};`
-    });
-    const txt = el("span", { class: "sbxOHChipTxt" }, name);
-    const btn = el("button", { class: "sbxOHChip", title: "Click to select" }, dot, txt);
+  function ensureCoreUI() {
+    if ($("#psoSidebar")) return;
 
-    btn.onclick = () => {
-      if (typeof window.selectElement === "function") window.selectElement(name);
-      pushRecent(name);
-      renderChips();
-      window.focusGame?.();
-    };
+    document.body.classList.add("sbx-pso");
 
-    // middle click removes (favorites only)
-    btn.onauxclick = (ev) => {
-      if (ev.button !== 1) return;
-      if (kind === "fav") {
-        ev.preventDefault();
-        toggleFavorite(name);
-        markFavoriteButtons();
-        renderChips();
-      }
-    };
+    // overlay
+    document.body.appendChild(el("div", { id: "psoOverlay", onclick: () => setSidebarOpen(false) }));
 
-    return btn;
-  }
+    // sidebar
+    const sidebar = el("div", { id: "psoSidebar" });
 
-  function renderChips() {
-    const favWrap = $("#sbxOHFavChips");
-    const recWrap = $("#sbxOHRecChips");
-    const settings = loadSettings();
-
-    if (settings.favorites && favWrap) {
-      favWrap.innerHTML = "";
-      const favs = getFavs().filter(n => window.elements?.[n]);
-      if (favs.length === 0) {
-        favWrap.appendChild(el("span", { class: "sbxOHSmall" }, "No favorites yet."));
-      } else {
-        for (const n of favs) favWrap.appendChild(chipButton(n, "fav"));
-      }
-    }
-
-    if (settings.recents && recWrap) {
-      recWrap.innerHTML = "";
-      const rec = getRecents().filter(n => window.elements?.[n]).slice(0, 10);
-      if (rec.length === 0) {
-        recWrap.appendChild(el("span", { class: "sbxOHSmall" }, "No recents yet."));
-      } else {
-        for (const n of rec) recWrap.appendChild(chipButton(n, "rec"));
-      }
-    }
-  }
-
-  // ---------- Right-click + touch long-press to favorite
-  function hookFavoriteInput() {
-    const root = $("#elementControls") || document;
-    if (root.__ohpFavHooked) return;
-    root.__ohpFavHooked = true;
-
-    // right click
-    root.addEventListener("contextmenu", (ev) => {
-      const btn = ev.target?.closest?.(".elementButton");
-      if (!btn || !btn.id?.startsWith("elementButton-")) return;
-      ev.preventDefault();
-      const name = elementNameFromButton(btn);
-      toggleFavorite(name);
-      markFavoriteButtons();
-      renderChips();
-    }, { capture: true });
-
-    // long-press for touch
-    let pressTimer = null;
-    root.addEventListener("pointerdown", (ev) => {
-      const btn = ev.target?.closest?.(".elementButton");
-      if (!btn || !btn.id?.startsWith("elementButton-")) return;
-      // only on touch / pen
-      if (ev.pointerType === "mouse") return;
-      const name = elementNameFromButton(btn);
-      clearTimeout(pressTimer);
-      pressTimer = setTimeout(() => {
-        toggleFavorite(name);
-        markFavoriteButtons();
-        renderChips();
-      }, 450);
-    }, { capture: true });
-
-    root.addEventListener("pointerup", () => clearTimeout(pressTimer), { capture: true });
-    root.addEventListener("pointercancel", () => clearTimeout(pressTimer), { capture: true });
-  }
-
-  // ---------- Wrap selectElement to track recents
-  function hookRecents() {
-    if (typeof window.selectElement !== "function") return;
-    if (window.selectElement.__ohpWrapped) return;
-
-    const old = window.selectElement;
-    function wrapped(name, ...rest) {
-      try {
-        pushRecent(name);
-        renderChips();
-      } catch {}
-      return old.call(this, name, ...rest);
-    }
-    wrapped.__ohpWrapped = true;
-    window.selectElement = wrapped;
-  }
-
-  // ---------- Tooltip for element buttons (cleaner, more useful)
-  function installTooltip() {
-    if ($("#sbxOHTooltip")) return;
-    const tip = el("div", { id: "sbxOHTooltip" });
-    document.body.appendChild(tip);
-
-    function show(x, y, html) {
-      tip.innerHTML = html;
-      tip.style.display = "block";
-      const pad = 14;
-      const maxX = window.innerWidth - 18;
-      const maxY = window.innerHeight - 18;
-      tip.style.left = `${Math.min(maxX, x + pad)}px`;
-      tip.style.top  = `${Math.min(maxY, y + pad)}px`;
-    }
-    function hide() { tip.style.display = "none"; }
-
-    document.addEventListener("mousemove", (ev) => {
-      if (tip.style.display !== "none") {
-        const pad = 14;
-        const maxX = window.innerWidth - 18;
-        const maxY = window.innerHeight - 18;
-        tip.style.left = `${Math.min(maxX, ev.clientX + pad)}px`;
-        tip.style.top  = `${Math.min(maxY, ev.clientY + pad)}px`;
-      }
-    });
-
-    document.addEventListener("mouseover", (ev) => {
-      const btn = ev.target?.closest?.(".elementButton");
-      if (!btn || !btn.id?.startsWith("elementButton-")) return;
-
-      const name = elementNameFromButton(btn);
-      const e = window.elements?.[name];
-      if (!e) return;
-
-      const cat = e.category ?? "—";
-      const state = e.state ?? "—";
-      const dens = (typeof e.density === "number") ? e.density : "—";
-      const visc = (typeof e.viscosity === "number") ? e.viscosity : "—";
-      const desc = e.desc || e.description || "";
-
-      show(ev.clientX, ev.clientY,
-        `<b>${name}</b><br>
-         <span class="muted">Category:</span> ${cat} &nbsp; <span class="muted">State:</span> ${state}<br>
-         <span class="muted">Density:</span> ${dens} &nbsp; <span class="muted">Viscosity:</span> ${visc}
-         ${desc ? `<br><span class="muted">${String(desc).slice(0, 220)}</span>` : ""}`
-      );
-    }, { capture: true });
-
-    document.addEventListener("mouseout", (ev) => {
-      const btn = ev.target?.closest?.(".elementButton");
-      if (!btn) return;
-      hide();
-    }, { capture: true });
-  }
-
-  // ---------- Inspector (Alt+Click canvas to read pixel data)
-  function installInspector() {
-    if ($("#sbxOHInspect")) return;
-    const box = el("div", { id: "sbxOHInspect" });
-    document.body.appendChild(box);
-
-    function hideSoon() {
-      setTimeout(() => { box.style.display = "none"; }, 1600);
-    }
-
-    function findCanvas() {
-      // Sandboxels usually has one main canvas; take the biggest
-      const canvases = $$("canvas");
-      if (!canvases.length) return null;
-      return canvases.sort((a,b) => (b.width*b.height) - (a.width*a.height))[0];
-    }
-
-    function screenToGrid(ev, canvas) {
-      const rect = canvas.getBoundingClientRect();
-      const rx = (ev.clientX - rect.left) / rect.width;
-      const ry = (ev.clientY - rect.top) / rect.height;
-
-      const px = clamp(rx * canvas.width, 0, canvas.width - 1);
-      const py = clamp(ry * canvas.height, 0, canvas.height - 1);
-
-      // If pixelSize exists, convert to grid
-      const ps = (typeof window.pixelSize === "number" && window.pixelSize > 0) ? window.pixelSize : 1;
-      const gx = Math.floor(px / ps);
-      const gy = Math.floor(py / ps);
-      return { gx, gy };
-    }
-
-    window.addEventListener("pointerdown", (ev) => {
-      const settings = loadSettings();
-      if (!settings.inspector) return;
-      if (!ev.altKey) return;
-
-      const canvas = findCanvas();
-      if (!canvas) return;
-
-      const { gx, gy } = screenToGrid(ev, canvas);
-      const p = window.pixelMap?.[gx]?.[gy];
-      const elName = p?.element || "empty";
-
-      box.innerHTML = `
-        <b>Pixel</b> <span class="muted">(${gx}, ${gy})</span><br>
-        <span class="muted">Element:</span> ${elName}<br>
-        ${p ? `
-          <span class="muted">Temp:</span> ${typeof p.temp === "number" ? p.temp.toFixed(1) : "—"}<br>
-          <span class="muted">Charge:</span> ${p.charge ?? "—"}<br>
-          <span class="muted">Life:</span> ${p.life ?? "—"}<br>
-          <span class="muted">Data:</span> ${Object.keys(p).slice(0, 10).join(", ")}${Object.keys(p).length>10?"…":""}
-        ` : `<span class="muted">No pixel here.</span>`}
-      `;
-      box.style.left = `${Math.min(window.innerWidth - 24, ev.clientX + 14)}px`;
-      box.style.top  = `${Math.min(window.innerHeight - 24, ev.clientY + 14)}px`;
-      box.style.display = "block";
-      hideSoon();
-    }, { passive: true });
-  }
-
-  // ---------- Wheel brush size (Alt+Wheel on canvas)
-  function installWheelBrush() {
-    let hud = null, hudTimer = null;
-
-    function showBrush(n) {
-      if (!hud) return;
-      hud.textContent = `Brush: ${n}`;
-      hud.style.display = "block";
-      clearTimeout(hudTimer);
-      hudTimer = setTimeout(() => hud.style.display = "none", 900);
-    }
-
-    function ensureHud() {
-      if (hud) return;
-      hud = el("div", {
-        style: `
-          position: fixed; right: 12px; bottom: 12px;
-          z-index: 999999;
-          padding: 8px 10px;
-          border-radius: 12px;
-          border: 1px solid rgba(255,255,255,.12);
-          background: rgba(12,14,18,.92);
-          color: rgba(255,255,255,.92);
-          box-shadow: 0 14px 44px rgba(0,0,0,.45);
-          display:none;
-          font-size: 12px;
-        `
-      });
-      document.body.appendChild(hud);
-    }
-
-    function findCanvas() {
-      const canvases = $$("canvas");
-      if (!canvases.length) return null;
-      return canvases.sort((a,b) => (b.width*b.height) - (a.width*a.height))[0];
-    }
-
-    window.addEventListener("wheel", (ev) => {
-      const settings = loadSettings();
-      if (!settings.wheelBrush) return;
-      if (!ev.altKey) return;
-
-      const canvas = findCanvas();
-      if (!canvas) return;
-
-      // only if wheel is over the canvas area
-      const rect = canvas.getBoundingClientRect();
-      const inside = ev.clientX >= rect.left && ev.clientX <= rect.right && ev.clientY >= rect.top && ev.clientY <= rect.bottom;
-      if (!inside) return;
-
-      ev.preventDefault();
-      ensureHud();
-
-      // Sandboxels commonly uses mouseSize; fallback to brushSize if present
-      const key = (typeof window.mouseSize === "number") ? "mouseSize"
-               : (typeof window.brushSize === "number") ? "brushSize"
-               : null;
-      if (!key) return;
-
-      const cur = window[key];
-      const delta = ev.deltaY > 0 ? -1 : 1;
-      const next = clamp(cur + delta, 1, 200);
-      window[key] = next;
-
-      // try to sync settings if supported
-      if (typeof window.setSetting === "function") {
-        try { window.setSetting(key, next); } catch {}
-      }
-
-      showBrush(next);
-    }, { passive: false });
-  }
-
-  // ---------- Hotkeys (favorites + recents + TPS)
-  function installHotkeys() {
-    window.addEventListener("keydown", (ev) => {
-      const settings = loadSettings();
-      if (!settings.hotkeys) return;
-
-      const active = document.activeElement;
-      const typing = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
-      if (typing) return;
-
-      // Alt+1..9 = favorites
-      if (ev.altKey && !ev.ctrlKey && !ev.metaKey && /^[1-9]$/.test(ev.key)) {
-        const idx = parseInt(ev.key, 10) - 1;
-        const fav = getFavs().filter(n => window.elements?.[n])[idx];
-        if (fav && typeof window.selectElement === "function") {
-          window.selectElement(fav);
-          pushRecent(fav);
-          renderChips();
-          toast(`Selected favorite: ${fav}`);
-          ev.preventDefault();
-        }
-      }
-
-      // Shift+1..9 = recents
-      if (ev.shiftKey && !ev.ctrlKey && !ev.metaKey && /^[1-9]$/.test(ev.key)) {
-        const idx = parseInt(ev.key, 10) - 1;
-        const rec = getRecents().filter(n => window.elements?.[n])[idx];
-        if (rec && typeof window.selectElement === "function") {
-          window.selectElement(rec);
-          toast(`Selected recent: ${rec}`);
-          ev.preventDefault();
-        }
-      }
-
-      // Alt+- / Alt+= TPS adjust
-      if (ev.altKey && (ev.key === "-" || ev.key === "=")) {
-        const cur = (typeof window.tps === "number") ? window.tps : 30;
-        const next = clamp(cur + (ev.key === "-" ? -5 : 5), 1, 1000);
-        if (typeof window.setTPS === "function") window.setTPS(next);
-        const tpsInput = $("#sbxOHTps");
-        if (tpsInput) tpsInput.value = String(next);
-        toast(`TPS: ${next}`);
-        ev.preventDefault();
-      }
-    }, { passive: false });
-  }
-
-  // ---------- Settings panel
-  function buildPanel() {
-    if ($("#sbxOHPanel")) return;
-
-    const panel = el("div", { id: "sbxOHPanel" });
-
-    const head = el("div", { style: "display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px;" },
-      el("div", {},
-        el("div", { style: "font-weight:700;" }, `${MOD.name}`),
-        el("div", { class: "sbxOHSmall" }, `v${MOD.version}`)
+    const header = el("div", { id: "psoHeader" },
+      el("div", { id: "psoHeaderTitle" },
+        el("div", { class: "title" }, "ELEMENTS"),
+        el("div", { class: "sub", id: "psoSub" }, "Search • Categories • Favorites")
       ),
-      el("button", { class: "sbxOHIconBtn", title: "Close", onclick: () => togglePanel(false) }, "×")
+      el("div", { class: "psoHdrBtns" },
+        el("button", { class: "psoBtn", title: "Settings", onclick: () => toggleSettings() }, "⚙"),
+        el("button", { class: "psoBtn", title: "Close", onclick: () => setSidebarOpen(false) }, "×")
+      )
     );
 
+    const searchRow = el("div", { id: "psoSearchRow" },
+      el("input", { id: "psoSearch", type: "text", placeholder: "Search…   (/ or Ctrl+K)" }),
+      el("button", {
+        class: "psoBtn",
+        title: "Clear search (Esc)",
+        onclick: () => {
+          const i = $("#psoSearch");
+          i.value = "";
+          renderElements();
+          i.focus();
+        }
+      }, "×")
+    );
+
+    const cats = el("div", { id: "psoCats" });
+    const chips = el("div", { id: "psoChips" });
+
+    const listWrap = el("div", { id: "psoListWrap" },
+      el("div", { id: "psoList" })
+    );
+
+    sidebar.append(header, searchRow, cats, chips, listWrap);
+    document.body.appendChild(sidebar);
+
+    // settings panel
+    const settings = el("div", { id: "psoSettings" },
+      el("div", { id: "psoSettingsHeader" },
+        el("div", {},
+          el("div", { style: "font-weight:700;" }, `${MOD.name}`),
+          el("div", { class: "psoSmall" }, `v${MOD.version} • scrollable`)
+        ),
+        el("button", { class: "psoBtn", onclick: () => toggleSettings(false) }, "×")
+      ),
+      el("div", { id: "psoSettingsBody" })
+    );
+    document.body.appendChild(settings);
+
+    // tooltip + toast
+    document.body.appendChild(el("div", { id: "psoTip" }));
+    document.body.appendChild(el("div", { id: "psoToast" }));
+
+    // horizontal scroll with wheel on category row
+    cats.addEventListener("wheel", (ev) => {
+      if (Math.abs(ev.deltaY) > Math.abs(ev.deltaX)) {
+        cats.scrollLeft += ev.deltaY;
+        ev.preventDefault();
+      }
+    }, { passive: false });
+
+    // search behavior
+    $("#psoSearch").addEventListener("input", () => renderElements());
+  }
+
+  function addHamburgerButton() {
+    const tc = $("#toolControls");
+    if (!tc || $("#psoHamburger")) return;
+
+    const btn = el("button", {
+      id: "psoHamburger",
+      class: "controlButton",
+      title: "Open/Close element sidebar (≡)",
+      onclick: () => setSidebarOpen(!isSidebarOpen()),
+    }, "≡");
+
+    // put it near the left of tool buttons
+    tc.prepend(btn);
+  }
+
+  function isSidebarOpen() {
+    return localStorage.getItem(MOD.keys.sidebarOpen) === "1";
+  }
+  function setSidebarOpen(open) {
+    localStorage.setItem(MOD.keys.sidebarOpen, open ? "1" : "0");
+    $("#psoSidebar")?.classList.toggle("open", open);
+    $("#psoOverlay")?.classList.toggle("open", open);
+  }
+
+  function toggleSettings(force) {
+    const panel = $("#psoSettings");
+    if (!panel) return;
+    const open = (typeof force === "boolean") ? force : !panel.classList.contains("open");
+    panel.classList.toggle("open", open);
+  }
+
+  function applyHideVanilla() {
+    const s = loadSettings();
+    document.body.classList.toggle("pso-hide-vanilla", !!(s.enableSidebar && s.hideVanillaElementUI));
+  }
+
+  function buildSettingsPanel() {
+    const body = $("#psoSettingsBody");
+    if (!body) return;
+    body.innerHTML = "";
+
+    const s = loadSettings();
+
     function toggleRow(key, title, desc) {
-      const s = loadSettings();
-      const id = `ohp_${key}`;
-      const row = el("label", { class: "sbxOHToggle", for: id },
+      const id = `pso_${key}`;
+      const row = el("label", { class: "psoToggle", for: id },
         el("input", {
           id, type: "checkbox",
           checked: s[key] ? "checked" : null,
@@ -917,174 +639,536 @@ body.sbx-ohp #toolControls .controlButton:active{ transform: translateY(1px); }
             const next = loadSettings();
             next[key] = !!ev.target.checked;
             saveSettings(next);
-            applySettingsLive();
+            liveApply();
           }
         }),
         el("div", {},
-          el("div", { style: "font-weight:600;" }, title),
-          el("div", { class: "sbxOHSmall" }, desc)
+          el("div", { style: "font-weight:700;" }, title),
+          el("div", { class: "psoSmall" }, desc)
         )
       );
       return row;
     }
 
-    const body = el("div", {},
-      el("div", { class: "sbxOHSmall", style: "margin: 0 0 6px 2px;" }, "UI"),
-      toggleRow("skin", "Clean UI skin", "Less weird spacing, scoped styling, consistent bar"),
-      toggleRow("compactMode", "Compact bar", "Less height (looks cleaner)"),
-      toggleRow("search", "Search bar", "Filter element buttons instantly"),
-      toggleRow("favorites", "Favorites", "Right-click / long-press to pin elements"),
-      toggleRow("recents", "Recents", "Shows your last used elements"),
-      toggleRow("speed", "TPS controls", "Inline TPS with +/- and hotkeys"),
-      toggleRow("tooltips", "Better tooltips", "Cleaner hover info for elements"),
+    const section = (t) => el("div", { style: "margin: 10px 0 6px 2px; font-weight:700;" }, t);
 
-      el("div", { style: "height:1px; background: rgba(255,255,255,.10); margin: 10px 0;" }),
+    body.append(
+      section("UI"),
+      toggleRow("enableSidebar", "Enable left element sidebar", "Main feature: a scrollable bar with categories + search"),
+      toggleRow("hideVanillaElementUI", "Hide vanilla element/category rows", "Cleaner screen; sidebar becomes the main UI"),
+      toggleRow("sidebarOpenByDefault", "Open sidebar by default", "Keeps it open after refresh"),
+      toggleRow("showFavorites", "Show favorites", "Right-click element = favorite"),
+      toggleRow("showRecents", "Show recents", "Shows last used elements"),
+      toggleRow("showTooltips", "Tooltips", "Hover element buttons for info"),
 
-      el("div", { class: "sbxOHSmall", style: "margin: 0 0 6px 2px;" }, "Quality of life"),
-      toggleRow("hotkeys", "Hotkeys", "Alt+1..9 favorites, Shift+1..9 recents, / search"),
-      toggleRow("wheelBrush", "Alt+Wheel brush size", "Fast brush resize on canvas"),
-      toggleRow("inspector", "Alt+Click inspector", "See pixel element/temp/charge quickly"),
-      toggleRow("toasts", "Tiny notifications", "Quick feedback for actions"),
+      el("div", { style: "height: 2px; background: rgba(255,255,255,.08); margin: 10px 0;" }),
 
-      el("div", { style: "height:1px; background: rgba(255,255,255,.10); margin: 10px 0;" }),
+      section("Quality of life"),
+      toggleRow("hotkeys", "Hotkeys", "/ search, Ctrl+K search, Q swap last, Alt+1..9 favs, Shift+1..9 recents"),
+      toggleRow("altWheelBrush", "Alt+Wheel brush size", "Fast brush resizing"),
+      toggleRow("altMiddlePick", "Alt+MiddleClick pick", "Pick the element under cursor from the canvas"),
+      toggleRow("altClickInspect", "Alt+Click inspector", "Quick pixel info box"),
+      toggleRow("toasts", "Toasts", "Small notifications for actions"),
 
-      el("div", { class: "sbxOHSmall", style: "margin: 0 0 6px 2px;" }, "Tweaks / performance"),
-      toggleRow("smartHumans", "Smart humans", "Humans try to step away from danger"),
-      toggleRow("trappedSkip", "Trapped fluid skip", "Skips ticking fully surrounded fluid pixels"),
-      toggleRow("lazyGases", "Lazy gases", "Skips ticking fully surrounded gas pixels"),
+      el("div", { style: "height: 2px; background: rgba(255,255,255,.08); margin: 10px 0;" }),
 
-      el("div", { style: "display:flex; gap:8px; margin-top: 10px; flex-wrap:wrap;" },
+      section("Tweaks / performance"),
+      toggleRow("smartHumans", "Smart humans", "Humans step away from danger"),
+      toggleRow("trappedSkipFluids", "Skip trapped fluids", "Helps lag with huge enclosed fluid blobs"),
+      toggleRow("lazyGases", "Lazy gases", "Helps lag with huge enclosed gas blobs"),
+
+      el("div", { style: "display:flex; gap:8px; flex-wrap:wrap; margin-top: 10px;" },
         el("button", {
-          class: "sbxOHIconBtn",
-          style: "width:auto; padding: 6px 10px;",
-          onclick: () => { setFavs([]); markFavoriteButtons(); renderChips(); toast("Favorites cleared"); }
+          class: "psoBtn",
+          onclick: () => { setFavs([]); renderChips(); renderElements(); toast("Favorites cleared"); }
         }, "Clear favs"),
         el("button", {
-          class: "sbxOHIconBtn",
-          style: "width:auto; padding: 6px 10px;",
+          class: "psoBtn",
           onclick: () => { setRecents([]); renderChips(); toast("Recents cleared"); }
         }, "Clear recents"),
         el("button", {
-          class: "sbxOHIconBtn",
-          style: "width:auto; padding: 6px 10px; border-color: rgba(167,139,250,.45);",
-          onclick: () => { saveSettings({ ...MOD.defaults }); toast("Settings reset"); location.reload(); }
+          class: "psoBtn",
+          onclick: () => { saveSettings({ ...MOD.defaults }); toast("Reset settings"); location.reload(); }
         }, "Reset + reload")
+      ),
+
+      el("div", { class: "psoSmall", style: "margin-top:10px;" },
+        "Tip: If another mod also edits the UI, disable it to avoid layout fights."
       )
     );
-
-    panel.append(head, body);
-    document.body.appendChild(panel);
   }
 
-  function togglePanel(force) {
-    const p = $("#sbxOHPanel");
-    if (!p) return;
-    const show = (typeof force === "boolean") ? force : (p.style.display === "none" || !p.style.display);
-    p.style.display = show ? "block" : "none";
-  }
-
-  function applySettingsLive() {
-    // simplest + safest: rebuild the bar + (re)install optional UI pieces
-    $("#sbxOHBar")?.remove();
+  function liveApply() {
     const s = loadSettings();
+    applyHideVanilla();
 
-    document.body.classList.toggle("sbx-ohp", !!s.skin);
+    // sidebar on/off
+    if (!s.enableSidebar) {
+      setSidebarOpen(false);
+      $("#psoSidebar")?.classList.remove("open");
+      $("#psoOverlay")?.classList.remove("open");
+      return;
+    }
 
-    buildBar();
-    hookFavoriteInput();
-    hookRecents();
-    markFavoriteButtons();
+    // chips + list rerender
+    renderCategories();
     renderChips();
+    renderElements();
 
-    if (s.tooltips) installTooltip(); else $("#sbxOHTooltip")?.remove();
-    if (s.inspector) { /* already listens */ }
-    if (s.wheelBrush) { /* already listens */ }
+    // tooltip toggle
+    if (!s.showTooltips) $("#psoTip").style.display = "none";
+
+    // open by default
+    if (s.sidebarOpenByDefault && localStorage.getItem(MOD.keys.sidebarOpen) == null) {
+      setSidebarOpen(true);
+    }
   }
 
-  // ---------- Tweaks / perf patches (safe-ish)
+  // ---------- Favorites/Recents + select tracking
+  function toggleFavorite(name) {
+    const favs = getFavs();
+    const i = favs.indexOf(name);
+    if (i >= 0) { favs.splice(i, 1); toast(`Unfavorited: ${prettyName(name)}`); }
+    else { favs.unshift(name); toast(`Favorited: ${prettyName(name)}`); }
+    setFavs(favs);
+    renderChips();
+    renderElements();
+  }
+
+  function pushRecent(name) {
+    const r = getRecents();
+    const next = [name, ...r.filter(x => x !== name)];
+    setRecents(next);
+    renderChips();
+  }
+
+  function hookSelectElement() {
+    if (typeof window.selectElement !== "function") return;
+    if (window.selectElement.__psoWrapped) return;
+
+    const old = window.selectElement;
+    function wrapped(name, ...rest) {
+      try {
+        lastSelected = currentSelected;
+        currentSelected = name;
+        pushRecent(name);
+      } catch {}
+      return old.call(this, name, ...rest);
+    }
+    wrapped.__psoWrapped = true;
+    window.selectElement = wrapped;
+  }
+
+  // ---------- Render categories / chips / elements
+  function renderCategories() {
+    const catsWrap = $("#psoCats");
+    if (!catsWrap) return;
+
+    const s = loadSettings();
+    if (!s.enableSidebar) return;
+
+    catsWrap.innerHTML = "";
+
+    const cats = categoriesFromDOMOrFallback();
+    const allBtn = el("button", { class: `psoCat ${currentCategory === "all" ? "active" : ""}` }, "ALL");
+    allBtn.onclick = () => { currentCategory = "all"; renderCategories(); renderElements(); };
+    catsWrap.appendChild(allBtn);
+
+    for (const c of cats) {
+      const btn = el("button", { class: `psoCat ${currentCategory === c.key ? "active" : ""}` }, c.label);
+      btn.onclick = () => { currentCategory = c.key; renderCategories(); renderElements(); };
+      catsWrap.appendChild(btn);
+    }
+  }
+
+  function chip(label, name) {
+    const dot = el("span", { class: "psoDot", style: `background:${elementColor(name)};` });
+    const txt = el("span", { class: "psoChipTxt" }, label);
+    const b = el("button", { class: "psoChip", title: "Click to select" }, dot, txt);
+    b.onclick = () => { window.selectElement?.(name); setSidebarOpen(true); };
+    return b;
+  }
+
+  function renderChips() {
+    const chipsWrap = $("#psoChips");
+    if (!chipsWrap) return;
+
+    const s = loadSettings();
+    chipsWrap.innerHTML = "";
+
+    if (s.showFavorites) {
+      const favs = getFavs().filter(n => window.elements?.[n]);
+      chipsWrap.appendChild(el("div", {},
+        el("div", { class: "psoSectionTitle" }, "Favorites (right-click element to toggle)"),
+        el("div", { class: "psoChipRow" },
+          ...(favs.length ? favs.slice(0, 12).map(n => chip(prettyName(n), n)) : [el("div", { class: "psoSmall" }, "No favorites yet.")])
+        )
+      ));
+    }
+
+    if (s.showRecents) {
+      const rec = getRecents().filter(n => window.elements?.[n]).slice(0, 12);
+      chipsWrap.appendChild(el("div", {},
+        el("div", { class: "psoSectionTitle" }, "Recent"),
+        el("div", { class: "psoChipRow" },
+          ...(rec.length ? rec.map(n => chip(prettyName(n), n)) : [el("div", { class: "psoSmall" }, "No recents yet.")])
+        )
+      ));
+    }
+  }
+
+  function matchesCategory(name, def, catKey) {
+    if (catKey === "all") return true;
+    const c = def?.category || "other";
+    return String(c) === String(catKey);
+  }
+
+  function renderElements() {
+    const list = $("#psoList");
+    if (!list) return;
+
+    const s = loadSettings();
+    if (!s.enableSidebar) { list.innerHTML = ""; return; }
+
+    const query = ($("#psoSearch")?.value || "").trim().toLowerCase();
+    const favSet = new Set(getFavs());
+
+    const { all, byCat } = buildElementIndex();
+
+    let candidates = [];
+    if (currentCategory === "all") candidates = all;
+    else candidates = (byCat.get(currentCategory) || []);
+
+    // filter by search
+    if (query) {
+      candidates = candidates.filter(n => {
+        const label = prettyName(n).toLowerCase();
+        return label.includes(query) || String(n).toLowerCase().includes(query);
+      });
+    }
+
+    // show count
+    const sub = $("#psoSub");
+    if (sub) sub.textContent = `${candidates.length} shown • ${query ? "filtered" : (currentCategory === "all" ? "all categories" : "category")}`;
+
+    list.innerHTML = "";
+
+    for (const name of candidates) {
+      const def = window.elements?.[name];
+      if (!def || def.hidden) continue;
+
+      const b = el("button", { class: "psoElBtn", "data-el": name });
+      const dot = el("span", { class: "psoDot", style: `background:${elementColor(name)}; width:12px; height:12px;` });
+      const nm = el("span", { class: "psoElName" }, prettyName(name));
+
+      if (favSet.has(name)) b.appendChild(el("span", { class: "psoStar", title: "Favorited" }, "★"));
+
+      b.append(dot, nm);
+
+      b.onclick = () => {
+        window.selectElement?.(name);
+        setSidebarOpen(true);
+      };
+
+      // right click to favorite
+      b.addEventListener("contextmenu", (ev) => {
+        ev.preventDefault();
+        toggleFavorite(name);
+      });
+
+      // tooltip on hover
+      if (s.showTooltips) {
+        b.addEventListener("mouseenter", (ev) => showTooltip(ev, name));
+        b.addEventListener("mousemove", (ev) => moveTooltip(ev));
+        b.addEventListener("mouseleave", () => hideTooltip());
+      }
+
+      list.appendChild(b);
+    }
+  }
+
+  // ---------- Tooltip
+  function showTooltip(ev, name) {
+    const s = loadSettings();
+    if (!s.showTooltips) return;
+    const tip = $("#psoTip");
+    if (!tip) return;
+
+    const def = window.elements?.[name];
+    const cat = def?.category ?? "—";
+    const state = def?.state ?? "—";
+    const dens = (typeof def?.density === "number") ? def.density : "—";
+    const visc = (typeof def?.viscosity === "number") ? def.viscosity : "—";
+
+    tip.innerHTML = `<b>${prettyName(name)}</b> <span class="muted">(${name})</span><br>
+      <span class="muted">Category:</span> ${cat} &nbsp; <span class="muted">State:</span> ${state}<br>
+      <span class="muted">Density:</span> ${dens} &nbsp; <span class="muted">Viscosity:</span> ${visc}`;
+
+    tip.style.display = "block";
+    moveTooltip(ev);
+  }
+
+  function moveTooltip(ev) {
+    const tip = $("#psoTip");
+    if (!tip || tip.style.display === "none") return;
+    const pad = 14;
+    const x = Math.min(window.innerWidth - 16, ev.clientX + pad);
+    const y = Math.min(window.innerHeight - 16, ev.clientY + pad);
+    tip.style.left = `${x}px`;
+    tip.style.top = `${y}px`;
+  }
+
+  function hideTooltip() {
+    const tip = $("#psoTip");
+    if (tip) tip.style.display = "none";
+  }
+
+  // ---------- QoL Hotkeys
+  function installHotkeys() {
+    window.addEventListener("keydown", (ev) => {
+      const s = loadSettings();
+      if (!s.hotkeys) return;
+
+      const active = document.activeElement;
+      const typing = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
+
+      // Focus search: / or Ctrl+K
+      if (!typing && ev.key === "/") {
+        ev.preventDefault();
+        setSidebarOpen(true);
+        $("#psoSearch")?.focus();
+        $("#psoSearch")?.select();
+      }
+      if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "k") {
+        ev.preventDefault();
+        setSidebarOpen(true);
+        $("#psoSearch")?.focus();
+        $("#psoSearch")?.select();
+      }
+
+      // ESC clears search if focused
+      if (ev.key === "Escape" && active === $("#psoSearch")) {
+        ev.preventDefault();
+        $("#psoSearch").value = "";
+        renderElements();
+        $("#psoSearch").blur();
+      }
+
+      // Q swaps last/current
+      if (!typing && ev.key.toLowerCase() === "q" && lastSelected) {
+        ev.preventDefault();
+        window.selectElement?.(lastSelected);
+        toast(`Swapped to: ${prettyName(lastSelected)}`);
+      }
+
+      // Alt+1..9 = favorites
+      if (!typing && ev.altKey && /^[1-9]$/.test(ev.key)) {
+        const idx = parseInt(ev.key, 10) - 1;
+        const fav = getFavs().filter(n => window.elements?.[n])[idx];
+        if (fav) {
+          ev.preventDefault();
+          window.selectElement?.(fav);
+          toast(`Favorite: ${prettyName(fav)}`);
+        }
+      }
+
+      // Shift+1..9 = recents
+      if (!typing && ev.shiftKey && /^[1-9]$/.test(ev.key)) {
+        const idx = parseInt(ev.key, 10) - 1;
+        const rec = getRecents().filter(n => window.elements?.[n])[idx];
+        if (rec) {
+          ev.preventDefault();
+          window.selectElement?.(rec);
+          toast(`Recent: ${prettyName(rec)}`);
+        }
+      }
+    }, { passive: false });
+  }
+
+  // ---------- Alt+Wheel brush size (best-effort)
+  function installAltWheelBrush() {
+    window.addEventListener("wheel", (ev) => {
+      const s = loadSettings();
+      if (!s.altWheelBrush) return;
+      if (!ev.altKey) return;
+
+      // only if over a canvas
+      const canvases = $$("canvas");
+      const canvas = canvases.sort((a, b) => (b.width*b.height) - (a.width*a.height))[0];
+      if (!canvas) return;
+      const r = canvas.getBoundingClientRect();
+      const inside = ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom;
+      if (!inside) return;
+
+      const key = (typeof window.mouseSize === "number") ? "mouseSize"
+               : (typeof window.brushSize === "number") ? "brushSize"
+               : null;
+      if (!key) return;
+
+      ev.preventDefault();
+      const cur = window[key];
+      const delta = ev.deltaY > 0 ? -1 : 1;
+      const next = clamp(cur + delta, 1, 200);
+      window[key] = next;
+      try { window.setSetting?.(key, next); } catch {}
+      toast(`Brush: ${next}`);
+    }, { passive: false });
+  }
+
+  // ---------- Canvas coordinate helpers (for pick/inspect)
+  function findMainCanvas() {
+    const canvases = $$("canvas");
+    if (!canvases.length) return null;
+    return canvases.sort((a, b) => (b.width*b.height) - (a.width*a.height))[0];
+  }
+
+  function screenToGrid(ev, canvas) {
+    const rect = canvas.getBoundingClientRect();
+    const rx = (ev.clientX - rect.left) / rect.width;
+    const ry = (ev.clientY - rect.top) / rect.height;
+
+    const px = clamp(rx * canvas.width, 0, canvas.width - 1);
+    const py = clamp(ry * canvas.height, 0, canvas.height - 1);
+
+    const ps = (typeof window.pixelSize === "number" && window.pixelSize > 0) ? window.pixelSize : 1;
+    return { gx: Math.floor(px / ps), gy: Math.floor(py / ps) };
+  }
+
+  // ---------- Alt+Middle pick
+  function installAltMiddlePick() {
+    window.addEventListener("pointerdown", (ev) => {
+      const s = loadSettings();
+      if (!s.altMiddlePick) return;
+      if (!ev.altKey) return;
+      if (ev.button !== 1) return; // middle click
+
+      const canvas = findMainCanvas();
+      if (!canvas) return;
+
+      const { gx, gy } = screenToGrid(ev, canvas);
+      const p = window.pixelMap?.[gx]?.[gy];
+      const name = p?.element;
+      if (name && window.elements?.[name]) {
+        window.selectElement?.(name);
+        toast(`Picked: ${prettyName(name)}`);
+        setSidebarOpen(true);
+      }
+    }, { passive: true });
+  }
+
+  // ---------- Alt+Click inspect
+  function installAltClickInspect() {
+    const boxId = "psoInspect";
+    if ($(`#${boxId}`)) return;
+    const box = el("div", {
+      id: boxId,
+      style: `
+        position: fixed; z-index: 999999; display:none;
+        padding: 8px 10px;
+        border-radius: 10px;
+        background: rgba(0,0,0,.88);
+        border: 2px solid rgba(255,255,255,.14);
+        color: rgba(255,255,255,.92);
+        box-shadow: 0 10px 24px rgba(0,0,0,.55);
+        font-size: 12px;
+        max-width: 380px;
+      `
+    });
+    document.body.appendChild(box);
+
+    window.addEventListener("pointerdown", (ev) => {
+      const s = loadSettings();
+      if (!s.altClickInspect) return;
+      if (!ev.altKey) return;
+      if (ev.button !== 0) return;
+
+      const canvas = findMainCanvas();
+      if (!canvas) return;
+
+      const { gx, gy } = screenToGrid(ev, canvas);
+      const p = window.pixelMap?.[gx]?.[gy];
+      const elName = p?.element || "empty";
+
+      box.innerHTML = `
+        <b>Pixel</b> <span style="opacity:.7;">(${gx}, ${gy})</span><br>
+        <span style="opacity:.7;">Element:</span> ${elName}<br>
+        ${p ? `
+          <span style="opacity:.7;">Temp:</span> ${typeof p.temp === "number" ? p.temp.toFixed(1) : "—"}<br>
+          <span style="opacity:.7;">Charge:</span> ${p.charge ?? "—"}<br>
+          <span style="opacity:.7;">Life:</span> ${p.life ?? "—"}
+        ` : `<span style="opacity:.7;">No pixel here.</span>`}
+      `;
+
+      const pad = 14;
+      box.style.left = `${Math.min(window.innerWidth - 16, ev.clientX + pad)}px`;
+      box.style.top  = `${Math.min(window.innerHeight - 16, ev.clientY + pad)}px`;
+      box.style.display = "block";
+      clearTimeout(installAltClickInspect._tm);
+      installAltClickInspect._tm = setTimeout(() => box.style.display = "none", 1600);
+    }, { passive: true });
+  }
+
+  // ---------- Tweaks/perf (safe-ish)
   function patchSmartHumans() {
     const e = window.elements;
-    if (!e?.human || e.human.__ohpSmart || typeof e.human.tick !== "function") return;
-    e.human.__ohpSmart = true;
+    if (!e?.human || e.human.__psoSmart || typeof e.human.tick !== "function") return;
+    e.human.__psoSmart = true;
 
     const old = e.human.tick;
-    const danger = new Set([
-      "fire", "smoke", "lava", "magma", "acid", "acid_gas", "explosion",
-      "radiation", "plasma", "napalm", "greek_fire", "nuke"
-    ]);
-
+    const danger = new Set(["fire","smoke","lava","magma","acid","acid_gas","explosion","radiation","plasma","napalm","greek_fire","nuke"]);
     const adj = window.adjacentCoords;
-    const isEmpty = window.isEmpty;
     const tryMove = window.tryMove;
+    const isEmpty = window.isEmpty;
 
     e.human.tick = function (pixel) {
       try {
         const pm = window.pixelMap;
-        if (!adj || !pm || !isEmpty || !tryMove) return old(pixel);
+        if (!pm || !adj || !tryMove || !isEmpty) return old(pixel);
 
         let vx = 0, vy = 0, seen = 0;
-
         for (const [dx, dy] of adj) {
-          const nx = pixel.x + dx, ny = pixel.y + dy;
-          const p2 = pm?.[nx]?.[ny];
-          const nEl = p2?.element;
-
-          const dangerByEl = nEl && danger.has(nEl);
-          const dangerByTemp = (typeof p2?.temp === "number" && p2.temp > 250);
-          if (dangerByEl || dangerByTemp) { vx += dx; vy += dy; seen++; }
+          const p2 = pm?.[pixel.x + dx]?.[pixel.y + dy];
+          if (!p2) continue;
+          const hot = typeof p2.temp === "number" && p2.temp > 250;
+          if (danger.has(p2.element) || hot) { vx += dx; vy += dy; seen++; }
         }
 
-        if (seen > 0) {
+        if (seen) {
           const ax = vx === 0 ? 0 : (vx > 0 ? -1 : 1);
           const ay = vy === 0 ? 0 : (vy > 0 ? -1 : 1);
-
           const tries = [
             [pixel.x + ax, pixel.y],
             [pixel.x, pixel.y + ay],
             [pixel.x + ax, pixel.y + ay],
             [pixel.x + ax, pixel.y - ay],
           ];
-
-          for (const [tx, ty] of tries) {
-            if (tryMove(pixel, tx, ty)) return;
-          }
+          for (const [tx, ty] of tries) if (tryMove(pixel, tx, ty)) return;
         }
       } catch {}
       return old(pixel);
     };
-
-    log("Patched: smart humans");
   }
 
-  function patchTrappedSkip() {
+  function patchTrappedSkipFluids() {
     const e = window.elements;
-    if (!e || !window.adjacentCoords) return;
     const adj = window.adjacentCoords;
+    if (!e || !adj) return;
 
-    const targets = [
-      // fluids
-      "water", "salt_water", "dirty_water", "steam", "smoke", "cloud",
-      // common gases (some may not exist)
-      "oxygen", "hydrogen", "carbon_dioxide", "helium", "nitrogen"
-    ];
-
+    const targets = ["water","salt_water","dirty_water","steam","smoke","cloud"];
     for (const name of targets) {
-      const elDef = e[name];
-      if (!elDef || typeof elDef.tick !== "function" || elDef.__ohpTrapped) continue;
-      elDef.__ohpTrapped = true;
+      const def = e[name];
+      if (!def || def.__psoTrap || typeof def.tick !== "function") continue;
+      def.__psoTrap = true;
+      const old = def.tick;
 
-      const old = elDef.tick;
-      elDef.tick = function (pixel) {
+      def.tick = function (pixel) {
         try {
-          // randomize so we don't do neighbor checks every tick
           if (Math.random() < 0.40) {
             const pm = window.pixelMap;
             if (!pm) return old(pixel);
-
             let trapped = true;
             for (const [dx, dy] of adj) {
-              const nx = pixel.x + dx, ny = pixel.y + dy;
-              const p2 = pm?.[nx]?.[ny];
+              const p2 = pm?.[pixel.x + dx]?.[pixel.y + dy];
               if (!p2 || p2.element !== pixel.element) { trapped = false; break; }
             }
             if (trapped) return;
@@ -1093,30 +1177,25 @@ body.sbx-ohp #toolControls .controlButton:active{ transform: translateY(1px); }
         return old(pixel);
       };
     }
-
-    log("Patched: trapped skip");
   }
 
   function patchLazyGases() {
     const e = window.elements;
-    if (!e || !window.adjacentCoords) return;
     const adj = window.adjacentCoords;
+    if (!e || !adj) return;
 
-    // patch any element with state === "gas"
     for (const [name, def] of Object.entries(e)) {
-      if (!def || typeof def.tick !== "function" || def.__ohpLazyGas) continue;
+      if (!def || def.__psoLazyGas || typeof def.tick !== "function") continue;
       if (def.state !== "gas") continue;
 
-      def.__ohpLazyGas = true;
+      def.__psoLazyGas = true;
       const old = def.tick;
 
       def.tick = function (pixel) {
         try {
-          // only sometimes, and only if surrounded by same gas
           if (Math.random() < 0.35) {
             const pm = window.pixelMap;
             if (!pm) return old(pixel);
-
             let surrounded = true;
             for (const [dx, dy] of adj) {
               const p2 = pm?.[pixel.x + dx]?.[pixel.y + dy];
@@ -1128,69 +1207,61 @@ body.sbx-ohp #toolControls .controlButton:active{ transform: translateY(1px); }
         return old(pixel);
       };
     }
-
-    log("Patched: lazy gases");
-  }
-
-  // ---------- Observe UI changes (mods often rebuild element buttons)
-  function installObserver() {
-    const root = $("#elementControls");
-    if (!root || root.__ohpObs) return;
-    root.__ohpObs = true;
-
-    let pending = false;
-    const mo = new MutationObserver(() => {
-      if (pending) return;
-      pending = true;
-      setTimeout(() => {
-        pending = false;
-        markFavoriteButtons();
-        renderChips();
-      }, 120);
-    });
-    mo.observe(root, { childList: true, subtree: true });
   }
 
   // ---------- Boot
   onGameReady(async () => {
-    cleanupOld();
-
-    // basic anchors
+    // Wait for UI anchors
+    try { await waitFor(() => $("#toolControls")); } catch {}
     try { await waitFor(() => $("#controls")); } catch {}
-    try { await waitFor(() => $("#elementControls")); } catch {}
 
-    const settings = loadSettings();
+    injectCss("psoStyle", cssPixel());
+    updateTopOffsetVar();
+    window.addEventListener("resize", updateTopOffsetVar);
+    setInterval(updateTopOffsetVar, 1000);
 
-    // CSS + base nodes
-    if (settings.skin) document.body.classList.add("sbx-ohp");
-    injectCss("sbxOHStyle", cssSkin());
+    ensureCoreUI();
+    addHamburgerButton();
 
-    // support UI nodes
-    document.body.appendChild(el("div", { id: "sbxOHToast" }));
-    buildPanel();
-    buildBar();
+    hookSelectElement();
 
-    // hooks
-    hookFavoriteInput();
-    hookRecents();
-    installObserver();
-
-    // optional UI features
-    if (settings.tooltips) installTooltip();
-    if (settings.inspector) installInspector();
-    if (settings.wheelBrush) installWheelBrush();
-    if (settings.hotkeys) installHotkeys();
-
-    // patches (safe-ish)
-    if (settings.smartHumans) patchSmartHumans();
-    if (settings.trappedSkip) patchTrappedSkip();
-    if (settings.lazyGases) patchLazyGases();
-
-    // initial visuals
-    markFavoriteButtons();
+    buildSettingsPanel();
+    renderCategories();
     renderChips();
+    renderElements();
 
-    log("Loaded", settings);
+    const s = loadSettings();
+    applyHideVanilla();
+
+    // open by default
+    if (s.enableSidebar) {
+      const hasPref = localStorage.getItem(MOD.keys.sidebarOpen) != null;
+      if (!hasPref) localStorage.setItem(MOD.keys.sidebarOpen, s.sidebarOpenByDefault ? "1" : "0");
+      setSidebarOpen(isSidebarOpen());
+    }
+
+    // Hooks
+    if (s.hotkeys) installHotkeys();
+    if (s.altWheelBrush) installAltWheelBrush();
+    if (s.altMiddlePick) installAltMiddlePick();
+    if (s.altClickInspect) installAltClickInspect();
+
+    // Tweaks/perf
+    if (s.smartHumans) patchSmartHumans();
+    if (s.trappedSkipFluids) patchTrappedSkipFluids();
+    if (s.lazyGases) patchLazyGases();
+
+    // Re-render when elements are changed by other mods
+    const ec = $("#elementControls");
+    if (ec) {
+      const mo = new MutationObserver(() => {
+        // categories might have changed (mods/language)
+        renderCategories();
+        renderChips();
+        renderElements();
+      });
+      mo.observe(ec, { childList: true, subtree: true });
+    }
   });
 
 })();
