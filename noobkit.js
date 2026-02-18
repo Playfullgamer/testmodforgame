@@ -1,11 +1,11 @@
-// noobkit.js v12 - Acid dissolves (almost) everything + fixes fire pixel spam + no gas spam + veins kept
+// noobkit.js v13 - Fire burns into gore/clots (not ash), organs break down, poop + pee works better
 // IDs are pg_*
 //
-// FIXES:
-// - pg_gastric_acid dissolves EVERYTHING (including water), except acid-proof human structure parts.
-// - gunpowder + acid reacts (fire/smoke/explosion)
-// - burning turns tissues into pg_charred_tissue (1:1 pixels, no huge extra pixel spam)
-// - removed gas spawning (no methane/oxygen-like spam)
+// FIXES in v13:
+// - Organs/tissues now have tempHigh melt (so fire destroys internals too)
+// - Burning makes pg_burnt_gore + some blood/clots (low spawn, no pixel explosion)
+// - Intestine wall peristalsis pushes feces/waste water down/out
+// - Adds pg_urine + pg_kidney_block + pg_bladder_wall + bladder drain hole in seed
 
 (function(main){
   if (typeof runAfterLoad === "function") runAfterLoad(main);
@@ -17,7 +17,7 @@
       console.error("[pg_noobkit] elements/behaviors not ready");
       return;
     }
-    console.log("[pg_noobkit] loaded v12");
+    console.log("[pg_noobkit] loaded v13");
 
     // ---------------- helpers ----------------
     function inBounds(x,y){ return !(typeof outOfBounds === "function" && outOfBounds(x,y)); }
@@ -75,6 +75,16 @@
       };
     }
 
+    // ---------------- clot ----------------
+    elements.pg_clot = {
+      color: ["#4a0a10","#5f0c14","#3b070c"],
+      behavior: behaviors.STURDYPOWDER,
+      category: CAT,
+      state: "solid",
+      density: 1400,
+      stain: 0.18,
+    };
+
     // ---------------- bleeding helper ----------------
     function bleedTick(pixel, strength){
       pixel._pgBleedAge = (pixel._pgBleedAge||0)+1;
@@ -87,18 +97,33 @@
       if (empty(nx,ny)) safeCreate(BLOOD, nx, ny);
     }
 
-    // ---------------- charred tissue (burn result, no extra pixel spam) ----------------
-    elements.pg_charred_tissue = {
-      color: ["#2b2b2b","#1f1f1f","#3a3a3a"],
-      behavior: behaviors.STURDYPOWDER,
-      category: CAT,
-      state: "solid",
-      density: 1350,
-      burn: 0,
-      stain: 0.02,
+    // ---------------- burned gore (looks realistic, 1:1 conversion) ----------------
+    elements.pg_burnt_gore = {
+      color: ["#1b0b0b","#2a0f0f","#3b1414","#120707"],
+      behavior: behaviors.LIQUID,
+      category: "liquids",
+      state: "liquid",
+      density: 1250,
+      viscosity: 90000,
+      stain: 0.22,
+      tick: function(pixel){
+        pixel._age = (pixel._age||0)+1;
+
+        // VERY LOW extra pixels: tiny blood seep
+        if (chance(0.003)) {
+          const nx = pixel.x + (chance(0.5)?-1:1);
+          const ny = pixel.y + 1;
+          if (empty(nx,ny)) safeCreate(BLOOD, nx, ny);
+        }
+
+        // sometimes solidify into clot (still 1:1)
+        if (pixel._age > 500 && chance(0.02) && pixel.temp < 70) {
+          safeChange(pixel, "pg_clot");
+        }
+      }
     };
 
-    // ---------------- fluids ----------------
+    // ---------------- other fluids ----------------
     elements.pg_saliva = {
       color: ["#e7f6ff","#d7efff"],
       behavior: behaviors.LIQUID,
@@ -108,7 +133,6 @@
       viscosity: 2200,
       stain: 0.01,
       tick: function(pixel){
-        // Lubricant field: nudges ANY nearby solid/powder/shard/chunk
         if (typeof tryMove !== "function") return;
         if (!chance(0.20)) return;
 
@@ -160,6 +184,16 @@
       stateHigh: STEAM || "steam",
     };
 
+    elements.pg_chyme = {
+      color: ["#6b4b2a","#845a34","#5c3f22"],
+      behavior: behaviors.LIQUID,
+      category: "liquids",
+      state: "liquid",
+      density: 1150,
+      viscosity: 30000,
+      stain: 0.12,
+    };
+
     elements.pg_waste_water = {
       color: ["#b7c89b","#a2b384","#d0dfb8"],
       behavior: behaviors.LIQUID,
@@ -170,15 +204,15 @@
       stain: 0.03,
     };
 
-    elements.pg_chyme = {
-      color: ["#6b4b2a","#845a34","#5c3f22"],
+    // pee
+    elements.pg_urine = {
+      color: ["#f2e46a","#e7d94f","#fff39a"],
       behavior: behaviors.LIQUID,
       category: "liquids",
       state: "liquid",
-      density: 1150,
-      viscosity: 30000,
-      stain: 0.12,
-      // NO GAS SPAWN (fix “oxygen spam” feeling)
+      density: 1010,
+      viscosity: 6000,
+      stain: 0.02,
     };
 
     elements.pg_feces = {
@@ -188,7 +222,6 @@
       state: "solid",
       density: 1350,
       stain: 0.10,
-      // NO GAS SPAWN
     };
 
     elements.pg_food_bolus = {
@@ -197,50 +230,6 @@
       category: CAT,
       state: "solid",
       density: 1300,
-    };
-
-    elements.pg_clot = {
-      color: ["#4a0a10","#5f0c14","#3b070c"],
-      behavior: behaviors.STURDYPOWDER,
-      category: CAT,
-      state: "solid",
-      density: 1400,
-      stain: 0.18,
-    };
-
-    // Improved gore: less “spawn spam”
-    elements.pg_gore = {
-      color: ["#6e1010","#7d1c1c","#4c0d0d","#5a2424"],
-      behavior: behaviors.LIQUID,
-      category: "liquids",
-      state: "liquid",
-      density: 1200,
-      viscosity: 65000,
-      stain: 0.22,
-      tick: function(pixel){
-        pixel._pgAge = (pixel._pgAge||0)+1;
-
-        // VERY low drip chance (prevents tons of new pixels)
-        if (chance(0.006)) {
-          const nx = pixel.x + (chance(0.5)?-1:1);
-          const ny = pixel.y + 1;
-          if (empty(nx,ny)) safeCreate(BLOOD, nx, ny);
-        }
-
-        // coagulate (no extra pixels)
-        if (pixel._pgAge > 450 && chance(0.03) && pixel.temp < 65) {
-          safeChange(pixel, "pg_clot");
-          return;
-        }
-
-        // separate (still 1:1)
-        if (pixel._pgAge > 700 && chance(0.10)) {
-          const r = Math.random();
-          if (r < 0.55) safeChange(pixel, BLOOD);
-          else if (r < 0.80) safeChange(pixel, "pg_chyme");
-          else safeChange(pixel, "pg_mucus");
-        }
-      }
     };
 
     elements.pg_brain_mush = {
@@ -253,18 +242,18 @@
       stain: 0.12,
       tick: function(pixel){
         pixel._pgAge = (pixel._pgAge||0)+1;
-        if (chance(0.02)) {
+        if (chance(0.012)) {
           const nx = pixel.x + (chance(0.5)?-1:1);
           const ny = pixel.y;
           if (empty(nx,ny)) safeCreate("pg_brain_fluid", nx, ny);
         }
-        if (pixel._pgAge > 900 && chance(0.12)) {
-          safeChange(pixel, chance(0.55) ? "pg_chyme" : "pg_gore");
+        if (pixel._pgAge > 900 && chance(0.10)) {
+          safeChange(pixel, "pg_burnt_gore");
         }
       }
     };
 
-    // ---------------- materials: bone + cartilage + veins ----------------
+    // ---------------- materials: bone/cartilage/veins ----------------
     elements.pg_bone_block = {
       color: ["#eee5d2","#e0d4bc","#f6eedb"],
       behavior: behaviors.WALL,
@@ -292,8 +281,8 @@
       density: 1200,
       hardness: 0.25,
       breakInto: "pg_cartilage_chunk",
-      // burn -> charred (1:1)
-      burn: 2, burnTime: 110, burnInto: "pg_charred_tissue"
+      burn: 2, burnTime: 120, burnInto: "pg_burnt_gore",
+      tempHigh: 260, stateHigh: "pg_burnt_gore"
     };
     elements.pg_cartilage_chunk = {
       color: ["#d9e2e6","#c7d0d6","#eef3f5"],
@@ -301,7 +290,8 @@
       category: CAT,
       state: "solid",
       density: 1180,
-      burn: 2, burnTime: 90, burnInto: "pg_charred_tissue",
+      burn: 2, burnTime: 90, burnInto: "pg_burnt_gore",
+      tempHigh: 260, stateHigh: "pg_burnt_gore",
       tick: function(pixel){ bleedTick(pixel, 0.003); }
     };
 
@@ -313,10 +303,11 @@
       density: 1120,
       hardness: 0.10,
       breakInto: "pg_vein_chunk",
-      burn: 2, burnTime: 90, burnInto: "pg_charred_tissue",
+      burn: 2, burnTime: 90, burnInto: "pg_burnt_gore",
+      tempHigh: 220, stateHigh: "pg_burnt_gore",
       tick: function(pixel){
-        // small leak
-        if (!chance(0.008)) return;
+        // tiny leak (low so no pixel spam)
+        if (!chance(0.006)) return;
         const dirs = [[0,1],[1,0],[-1,0],[0,-1]];
         const d = dirs[(Math.random()*dirs.length)|0];
         const nx = pixel.x + d[0], ny = pixel.y + d[1];
@@ -330,10 +321,9 @@
       category: CAT,
       state: "solid",
       density: 1100,
-      burn: 2, burnTime: 70, burnInto: "pg_charred_tissue",
-      tick: function(pixel){
-        bleedTick(pixel, 0.05);
-      }
+      burn: 2, burnTime: 70, burnInto: "pg_burnt_gore",
+      tempHigh: 220, stateHigh: "pg_burnt_gore",
+      tick: function(pixel){ bleedTick(pixel, 0.05); }
     };
 
     // ---------------- tissues + organs (block + chunk) ----------------
@@ -353,28 +343,84 @@
       }, chunkDef);
     }
 
-    // Burn -> charred (prevents huge pixel creation)
+    // "on fire" realism without pixel spam:
+    // - 1:1 burnInto = pg_burnt_gore
+    // - very small blood/clot spawn when hot
+    function hotBleed(pixel) {
+      // only when very hot (fire touching)
+      if (pixel.temp > 160 && chance(0.004)) {
+        const nx = pixel.x + (chance(0.5)?-1:1);
+        const ny = pixel.y + 1;
+        if (empty(nx,ny)) safeCreate(BLOOD, nx, ny);
+      }
+      if (pixel.temp > 170 && chance(0.002)) {
+        const nx = pixel.x, ny = pixel.y + 1;
+        if (empty(nx,ny)) safeCreate("pg_clot", nx, ny);
+      }
+    }
+
     makeBlockAndChunk("pg_skin",
-      { color:["#f2c6a7","#e8b996","#d9a785"], density:1120, burn:2, burnTime:110, burnInto:"pg_charred_tissue" },
-      { color:["#f2c6a7","#e8b996","#d9a785"], density:1100, burn:2, burnTime:90, burnInto:"pg_charred_tissue" },
-      0.015
+      {
+        color:["#f2c6a7","#e8b996","#d9a785"],
+        density:1120,
+        burn:3, burnTime:95, burnInto:"pg_burnt_gore",
+        tempHigh: 230, stateHigh: "pg_burnt_gore",
+        tick: function(pixel){ hotBleed(pixel); }
+      },
+      {
+        color:["#f2c6a7","#e8b996","#d9a785"],
+        density:1100,
+        burn:3, burnTime:80, burnInto:"pg_burnt_gore",
+        tempHigh: 230, stateHigh: "pg_burnt_gore",
+        tick: function(pixel){ bleedTick(pixel,0.015); hotBleed(pixel); }
+      },
+      null
     );
 
     makeBlockAndChunk("pg_muscle",
-      { color:["#b54545","#c85a5a","#9c2f2f"], density:1150, burn:2, burnTime:100, burnInto:"pg_charred_tissue" },
-      { color:["#b54545","#c85a5a","#9c2f2f"], density:1120, burn:2, burnTime:80, burnInto:"pg_charred_tissue" },
-      0.02
+      {
+        color:["#b54545","#c85a5a","#9c2f2f"],
+        density:1150,
+        burn:3, burnTime:85, burnInto:"pg_burnt_gore",
+        tempHigh: 220, stateHigh: "pg_burnt_gore",
+        tick: function(pixel){ hotBleed(pixel); }
+      },
+      {
+        color:["#b54545","#c85a5a","#9c2f2f"],
+        density:1120,
+        burn:3, burnTime:70, burnInto:"pg_burnt_gore",
+        tempHigh: 220, stateHigh: "pg_burnt_gore",
+        tick: function(pixel){ bleedTick(pixel,0.02); hotBleed(pixel); }
+      },
+      null
     );
 
     makeBlockAndChunk("pg_fat",
-      { color:["#fff3b0","#ffe68a","#fff0a0"], density:920, burn:3, burnTime:90, burnInto:"pg_charred_tissue" },
-      { color:["#fff3b0","#ffe68a","#fff0a0"], density:900, burn:3, burnTime:70, burnInto:"pg_charred_tissue" },
+      {
+        color:["#fff3b0","#ffe68a","#fff0a0"],
+        density:920,
+        burn:4, burnTime:80, burnInto:"pg_burnt_gore",
+        tempHigh: 240, stateHigh: "pg_burnt_gore",
+        tick: function(pixel){ hotBleed(pixel); }
+      },
+      {
+        color:["#fff3b0","#ffe68a","#fff0a0"],
+        density:900,
+        burn:4, burnTime:65, burnInto:"pg_burnt_gore",
+        tempHigh: 240, stateHigh: "pg_burnt_gore",
+      },
       0.01
     );
 
     makeBlockAndChunk("pg_brain",
-      { color:["#a99aa6","#bdb0ba","#948793"], density:1060, hardness:0.12, burn:2, burnTime:80, burnInto:"pg_brain_mush",
+      {
+        color:["#a99aa6","#bdb0ba","#948793"],
+        density:1060,
+        hardness:0.12,
+        burn:3, burnTime:70, burnInto:"pg_brain_mush",
+        tempHigh: 200, stateHigh: "pg_brain_mush",
         tick:function(pixel){
+          hotBleed(pixel);
           if (chance(0.015)) {
             const dirs=[[0,1],[1,0],[-1,0],[0,-1]];
             const d=dirs[(Math.random()*dirs.length)|0];
@@ -383,22 +429,27 @@
           }
         }
       },
-      { color:["#a99aa6","#bdb0ba","#948793"], density:1040, burn:2, burnTime:70, burnInto:"pg_brain_mush",
-        tick:function(pixel){
-          bleedTick(pixel, 0.02);
-          if (chance(0.02)) {
-            const nx=pixel.x+(chance(0.5)?-1:1), ny=pixel.y;
-            if (empty(nx,ny)) safeCreate("pg_brain_fluid", nx, ny);
-          }
-        }
+      {
+        color:["#a99aa6","#bdb0ba","#948793"],
+        density:1040,
+        burn:3, burnTime:60, burnInto:"pg_brain_mush",
+        tempHigh: 200, stateHigh: "pg_brain_mush",
+        tick:function(pixel){ bleedTick(pixel,0.02); hotBleed(pixel); }
       },
       null
     );
 
     makeBlockAndChunk("pg_heart",
-      { color:["#8c0f1f","#a31226","#6e0b17"], density:1120, hardness:0.22, burn:2, burnTime:95, burnInto:"pg_charred_tissue",
+      {
+        color:["#8c0f1f","#a31226","#6e0b17"],
+        density:1120,
+        hardness:0.22,
+        burn:3, burnTime:80, burnInto:"pg_burnt_gore",
+        tempHigh: 220, stateHigh: "pg_burnt_gore",
         tick:function(pixel){
-          if (chance(0.03)) {
+          hotBleed(pixel);
+          // small pumping if intact (not spammy)
+          if (chance(0.015)) {
             const dirs=[[0,1],[1,0],[-1,0],[0,-1]];
             const d=dirs[(Math.random()*dirs.length)|0];
             const nx=pixel.x+d[0], ny=pixel.y+d[1];
@@ -406,26 +457,54 @@
           }
         }
       },
-      { color:["#8c0f1f","#a31226","#6e0b17"], density:1100, burn:2, burnTime:70, burnInto:"pg_charred_tissue" },
+      {
+        color:["#8c0f1f","#a31226","#6e0b17"],
+        density:1100,
+        burn:3, burnTime:65, burnInto:"pg_burnt_gore",
+        tempHigh: 220, stateHigh: "pg_burnt_gore",
+      },
       0.02
     );
 
     makeBlockAndChunk("pg_lung",
-      { color:["#c7a0a0","#d8b1b1","#b78d8d"], density:980, hardness:0.12, burn:2, burnTime:120, burnInto:"pg_charred_tissue",
+      {
+        color:["#c7a0a0","#d8b1b1","#b78d8d"],
+        density:980,
+        hardness:0.12,
+        burn:3, burnTime:110, burnInto:"pg_burnt_gore",
+        tempHigh: 230, stateHigh: "pg_burnt_gore",
         tick:function(pixel){
-          if (chance(0.004)) {
+          hotBleed(pixel);
+          if (chance(0.003)) {
             const nx=pixel.x+(chance(0.5)?-1:1), ny=pixel.y;
             if (empty(nx,ny)) safeCreate("pg_mucus",nx,ny);
           }
         }
       },
-      { color:["#c7a0a0","#d8b1b1","#b78d8d"], density:950, burn:2, burnTime:90, burnInto:"pg_charred_tissue" },
+      {
+        color:["#c7a0a0","#d8b1b1","#b78d8d"],
+        density:950,
+        burn:3, burnTime:90, burnInto:"pg_burnt_gore",
+        tempHigh: 230, stateHigh: "pg_burnt_gore",
+      },
       0.015
     );
 
     makeBlockAndChunk("pg_liver",
-      { color:["#5b1d1d","#6d2323","#4a1717"], density:1180, hardness:0.20, burn:2, burnTime:120, burnInto:"pg_charred_tissue" },
-      { color:["#5b1d1d","#6d2323","#4a1717"], density:1160, burn:2, burnTime:90, burnInto:"pg_charred_tissue" },
+      {
+        color:["#5b1d1d","#6d2323","#4a1717"],
+        density:1180,
+        hardness:0.20,
+        burn:3, burnTime:100, burnInto:"pg_burnt_gore",
+        tempHigh: 230, stateHigh: "pg_burnt_gore",
+        tick:function(pixel){ hotBleed(pixel); }
+      },
+      {
+        color:["#5b1d1d","#6d2323","#4a1717"],
+        density:1160,
+        burn:3, burnTime:85, burnInto:"pg_burnt_gore",
+        tempHigh: 230, stateHigh: "pg_burnt_gore",
+      },
       0.015
     );
 
@@ -458,7 +537,7 @@
       }
     };
 
-    // ---------------- digestion walls ----------------
+    // ---------------- mouth ----------------
     elements.pg_mouth_block = {
       color: ["#f0a0b2","#e98ea0","#d97a8b"],
       behavior: behaviors.WALL,
@@ -466,6 +545,7 @@
       state: "solid",
       density: 1120,
       tick: function(pixel){
+        // saliva
         pixel._pgCD = (pixel._pgCD||0)-1;
         if (pixel._pgCD <= 0) {
           pixel._pgCD = 40;
@@ -477,7 +557,7 @@
           }
         }
 
-        // chew: convert nearby non-pg solids -> food bolus
+        // chew solids -> bolus
         if (!chance(0.20)) return;
         const targets=[[0,-1],[1,-1],[-1,-1],[0,1]];
         const t=targets[(Math.random()*targets.length)|0];
@@ -493,6 +573,7 @@
       }
     };
 
+    // ---------------- stomach + intestines + bladder + kidneys ----------------
     elements.pg_stomach_wall = {
       color: ["#c07a68","#b56c5a","#d18a79"],
       behavior: behaviors.WALL,
@@ -501,8 +582,10 @@
       density: 1100,
       hardness: 0.30,
       breakInto: "pg_stomach_chunk",
+      burn: 3, burnTime: 110, burnInto: "pg_burnt_gore",
+      tempHigh: 240, stateHigh: "pg_burnt_gore",
       tick: function(pixel){
-        // keep a small amount of acid around (doesn't flood)
+        // keep a little acid around
         let acid=0;
         for (let dy=-3; dy<=3; dy++){
           for (let dx=-3; dx<=3; dx++){
@@ -518,17 +601,18 @@
         }
       }
     };
-
     elements.pg_stomach_chunk = {
       color: ["#c07a68","#b56c5a","#d18a79"],
       behavior: behaviors.STURDYPOWDER,
       category: CAT,
       state: "solid",
       density: 1080,
-      burn: 2, burnTime: 80, burnInto: "pg_charred_tissue",
-      tick: function(pixel){ bleedTick(pixel, 0.015); }
+      burn: 3, burnTime: 90, burnInto: "pg_burnt_gore",
+      tempHigh: 240, stateHigh: "pg_burnt_gore",
+      tick: function(pixel){ bleedTick(pixel, 0.015); hotBleed(pixel); }
     };
 
+    // Intestines: process + PUSH DOWN (poop actually exits)
     elements.pg_intestine_wall = {
       color: ["#caa07b","#d5b08b","#b88962"],
       behavior: behaviors.WALL,
@@ -537,31 +621,109 @@
       density: 1120,
       hardness: 0.18,
       breakInto: "pg_intestine_chunk",
+      burn: 3, burnTime: 120, burnInto: "pg_burnt_gore",
+      tempHigh: 240, stateHigh: "pg_burnt_gore",
       tick: function(pixel){
-        if (!chance(0.20)) return;
+        if (typeof tryMove === "function") {
+          // peristalsis: if feces/fluids inside are adjacent, push them DOWN
+          const around = [[0,-1],[0,1],[1,0],[-1,0]];
+          for (let i=0;i<2;i++){
+            const d = around[(Math.random()*around.length)|0];
+            const p = getPixel(pixel.x+d[0], pixel.y+d[1]);
+            if (p && (p.element === "pg_feces" || p.element === "pg_waste_water" || p.element === "pg_chyme")) {
+              // try down first, then down-diagonal
+              if (!tryMove(p, p.x, p.y+1)) {
+                tryMove(p, p.x + (chance(0.5)?-1:1), p.y+1);
+              }
+            }
+          }
+        }
+
+        // convert chyme -> feces or waste water
+        if (!chance(0.22)) return;
         const dirs=[[0,1],[1,0],[-1,0],[0,-1]];
         const d=dirs[(Math.random()*dirs.length)|0];
         const p=getPixel(pixel.x+d[0], pixel.y+d[1]);
         if (!p) return;
-
         if (p.element === "pg_chyme") {
           if (chance(0.65)) safeChange(p, "pg_feces");
           else safeChange(p, "pg_waste_water");
         }
       }
     };
-
     elements.pg_intestine_chunk = {
       color: ["#caa07b","#d5b08b","#b88962"],
       behavior: behaviors.STURDYPOWDER,
       category: CAT,
       state: "solid",
       density: 1100,
-      burn: 2, burnTime: 80, burnInto: "pg_charred_tissue",
-      tick: function(pixel){ bleedTick(pixel, 0.012); }
+      burn: 3, burnTime: 100, burnInto: "pg_burnt_gore",
+      tempHigh: 240, stateHigh: "pg_burnt_gore",
+      tick: function(pixel){ bleedTick(pixel, 0.012); hotBleed(pixel); }
     };
 
-    // ---------------- ACID: dissolves (almost) everything ----------------
+    // Kidneys spawn urine (no gases)
+    elements.pg_kidney_block = {
+      color: ["#8a3d3d","#9b4a4a","#6f2f2f"],
+      behavior: behaviors.WALL,
+      category: CAT,
+      state: "solid",
+      density: 1160,
+      hardness: 0.18,
+      breakInto: "pg_kidney_chunk",
+      burn: 3, burnTime: 110, burnInto: "pg_burnt_gore",
+      tempHigh: 230, stateHigh: "pg_burnt_gore",
+      tick: function(pixel){
+        hotBleed(pixel);
+        pixel._u = (pixel._u||0)-1;
+        if (pixel._u > 0) return;
+        pixel._u = 120; // urine every few seconds
+
+        // try to output urine into adjacent empty (ideally bladder cavity)
+        const dirs=[[0,1],[1,0],[-1,0],[0,-1]];
+        for (let i=0;i<4;i++){
+          const d=dirs[(Math.random()*dirs.length)|0];
+          const nx=pixel.x+d[0], ny=pixel.y+d[1];
+          if (empty(nx,ny)) { safeCreate("pg_urine", nx, ny); break; }
+        }
+      }
+    };
+    elements.pg_kidney_chunk = {
+      color: ["#8a3d3d","#9b4a4a","#6f2f2f"],
+      behavior: behaviors.STURDYPOWDER,
+      category: CAT,
+      state: "solid",
+      density: 1140,
+      burn: 3, burnTime: 90, burnInto: "pg_burnt_gore",
+      tempHigh: 230, stateHigh: "pg_burnt_gore",
+      tick: function(pixel){ bleedTick(pixel,0.012); hotBleed(pixel); }
+    };
+
+    // Bladder wall just holds urine
+    elements.pg_bladder_wall = {
+      color: ["#d7b1a8","#cfa39a","#e3c1ba"],
+      behavior: behaviors.WALL,
+      category: CAT,
+      state: "solid",
+      density: 1080,
+      hardness: 0.10,
+      breakInto: "pg_bladder_chunk",
+      burn: 3, burnTime: 120, burnInto: "pg_burnt_gore",
+      tempHigh: 230, stateHigh: "pg_burnt_gore",
+      tick: function(pixel){ hotBleed(pixel); }
+    };
+    elements.pg_bladder_chunk = {
+      color: ["#d7b1a8","#cfa39a","#e3c1ba"],
+      behavior: behaviors.STURDYPOWDER,
+      category: CAT,
+      state: "solid",
+      density: 1060,
+      burn: 3, burnTime: 100, burnInto: "pg_burnt_gore",
+      tempHigh: 230, stateHigh: "pg_burnt_gore",
+      tick: function(pixel){ bleedTick(pixel,0.01); hotBleed(pixel); }
+    };
+
+    // ---------------- stomach acid (same idea as your v12 request) ----------------
     elements.pg_diluted_acid = {
       color: ["#dfff80","#cfff6a","#e9ffb0"],
       behavior: behaviors.LIQUID,
@@ -573,13 +735,11 @@
       tick: function(pixel){
         pixel._pgAge=(pixel._pgAge||0)+1;
         if (pixel._pgAge > 2600 && chance(0.18)) {
-          // fade away (1:1)
           if (!safeDeleteAt(pixel.x,pixel.y) && elements.water) safeChange(pixel,"water");
         }
       }
     };
 
-    // Acid-proof list (what it should NOT dissolve)
     const ACID_PROOF = new Set([
       "pg_muscle_block","pg_muscle_chunk",
       "pg_stomach_wall","pg_stomach_chunk",
@@ -588,12 +748,6 @@
       "pg_cartilage_block",
       "pg_vein_block"
     ]);
-    function isAcidProof(elemName){
-      if (!elemName) return false;
-      if (ACID_PROOF.has(elemName)) return true;
-      // also treat any *wall as protected if it's our digestive walls (already listed)
-      return false;
-    }
 
     elements.pg_gastric_acid = {
       color: ["#c9ff3b","#a8f000","#d7ff6a"],
@@ -605,12 +759,9 @@
       stain: 0.10,
       tick: function(pixel){
         pixel._pgAge=(pixel._pgAge||0)+1;
-
-        // decay prevents infinite flooding
         if (pixel._pgAge > 900 && chance(0.12)) { safeChange(pixel,"pg_diluted_acid"); return; }
         if (pixel._pgAge > 1900 && chance(0.18)) { safeDeleteAt(pixel.x,pixel.y); return; }
 
-        // dissolve 1 neighbor often
         if (!chance(0.22)) return;
 
         const dirs=[[0,1],[1,0],[-1,0],[0,-1]];
@@ -621,73 +772,49 @@
         const e = p.element;
         if (!e || typeof e !== "string") return;
 
-        // protect key body structure
-        if (isAcidProof(e)) {
-          // neutralize a bit when touching protected tissue (helps stop self-melting)
+        if (ACID_PROOF.has(e)) {
           if (chance(0.25)) safeChange(pixel, "pg_diluted_acid");
           return;
         }
 
-        // special reaction: gunpowder
+        // gunpowder reaction
         if (e === "gunpowder" || e === "gunpowder_dust") {
-          // consume it and react
-          if (elements.explosion && chance(0.35)) safeChange(p, "explosion");
+          if (elements.explosion && chance(0.30)) safeChange(p, "explosion");
           else if (elements.fire) safeChange(p, "fire");
-          else safeDeleteAt(p.x, p.y);
-
-          // a little smoke if exists (NO oxygen)
-          if (elements.smoke && empty(pixel.x, pixel.y-1) && chance(0.35)) safeCreate("smoke", pixel.x, pixel.y-1);
-
-          // acid weakens
+          else safeDeleteAt(p.x,p.y);
+          if (elements.smoke && empty(pixel.x, pixel.y-1) && chance(0.25)) safeCreate("smoke", pixel.x, pixel.y-1);
           safeChange(pixel, "pg_diluted_acid");
           return;
         }
 
         const ed = elements[e];
         if (!ed) return;
-
-        // gases: ignore
         if (ed.state === "gas") return;
 
-        // liquids: "dissolve" into diluted acid (includes WATER)
+        // liquids (including WATER) -> diluted acid
         if (ed.state === "liquid") {
           safeChange(p, "pg_diluted_acid");
           if (chance(0.35)) safeChange(pixel, "pg_diluted_acid");
           return;
         }
 
-        // brain special: mush + brain fluid + a bit of blood
+        // brain special
         if (e === "pg_brain_block" || e === "pg_brain_chunk") {
           if (chance(0.30) && empty(p.x, p.y-1)) safeCreate(BLOOD, p.x, p.y-1);
-          for (let i=0;i<2;i++){
-            const nx = p.x + (chance(0.5)?-1:1);
-            const ny = p.y + (chance(0.5)?0:1);
-            if (empty(nx,ny)) { safeCreate("pg_brain_fluid", nx, ny); break; }
-          }
+          if (chance(0.40)) safeCreate("pg_brain_fluid", p.x + (chance(0.5)?-1:1), p.y);
           safeChange(p, "pg_brain_mush");
           return;
         }
 
-        // pg chunks/food: dissolve into chyme or gore (1:1)
+        // pg stuff -> chyme/burnt gore (1:1)
         if (e.startsWith("pg_")) {
-          if (e.endsWith("_chunk") || e === "pg_food_bolus" || e === "pg_clot") {
-            if (chance(0.20) && empty(pixel.x, pixel.y-1)) safeCreate(BLOOD, pixel.x, pixel.y-1);
-            safeChange(p, chance(0.75) ? "pg_chyme" : "pg_gore");
-          } else {
-            // other pg parts: still dissolve (as you asked: acid dissolves everything)
-            safeChange(p, chance(0.80) ? "pg_chyme" : "pg_gore");
-          }
+          safeChange(p, chance(0.80) ? "pg_chyme" : "pg_burnt_gore");
           return;
         }
 
-        // generic solids/powders/walls: dissolve into chyme (1:1)
-        // hard materials dissolve slower
+        // generic solids -> chyme
         const hard = (ed.hardness || 0) > 0.6;
-        if (chance(hard ? 0.20 : 0.55)) {
-          safeChange(p, "pg_chyme");
-          // occasionally weaken acid after heavy dissolve
-          if (hard && chance(0.25)) safeChange(pixel, "pg_diluted_acid");
-        }
+        if (chance(hard ? 0.20 : 0.55)) safeChange(p, "pg_chyme");
       }
     };
 
@@ -701,11 +828,8 @@
           const chunk = e.replace("_block","_chunk");
           if (elements[chunk]) {
             if (chance(0.65)) safeCreate(BLOOD, pixel.x+(chance(0.5)?1:-1), pixel.y);
-            if (chance(0.15) && empty(pixel.x, pixel.y+1)) safeCreate("pg_gore", pixel.x, pixel.y+1);
-
-            if (e === "pg_brain_block" && chance(0.7)) {
-              safeCreate("pg_brain_fluid", pixel.x, pixel.y+1);
-            }
+            if (chance(0.10) && empty(pixel.x, pixel.y+1)) safeCreate("pg_burnt_gore", pixel.x, pixel.y+1);
+            if (e === "pg_brain_block" && chance(0.7)) safeCreate("pg_brain_fluid", pixel.x, pixel.y+1);
             safeChange(pixel, chunk);
           }
         }
@@ -724,7 +848,7 @@
       }
     };
 
-    // ---------------- BIG HUMAN SEED (with veins + digestion + esophagus) ----------------
+    // ---------------- BIG HUMAN SEED (now with kidneys+bladder drain) ----------------
     function fillRect(x1,y1,x2,y2, elem){
       const xa=Math.min(x1,x2), xb=Math.max(x1,x2), ya=Math.min(y1,y2), yb=Math.max(y1,y2);
       for (let y=ya;y<=yb;y++) for (let x=xa;x<=xb;x++) if (empty(x,y)) safeCreate(elem,x,y);
@@ -757,14 +881,12 @@
       const torsoL = cx - 7;
       const torsoR = cx + 7;
 
-      // torso & head shells
       outlineRect(torsoL, torsoTop, torsoR, torsoBot, "pg_skin_block");
       fillRect(torsoL+1, torsoTop+1, torsoR-1, torsoBot-1, "pg_muscle_block");
 
       outlineRect(cx-headR, headY-headR, cx+headR, headY+headR, "pg_skin_block");
       fillRect(cx-headR+1, headY-headR+1, cx+headR-1, headY+headR-1, "pg_muscle_block");
 
-      // skull + brain
       outlineRect(cx-(headR-1), headY-(headR-1), cx+(headR-1), headY+(headR-1), "pg_bone_block");
       fillRect(cx-2, headY-2, cx+2, headY+1, "pg_brain_block");
 
@@ -780,28 +902,25 @@
       for (let ry=torsoTop+2; ry<=torsoTop+6; ry+=2) line(cx-5, ry, cx+5, ry, "pg_bone_block");
       line(cx-3, torsoBot-1, cx+3, torsoBot-1, "pg_bone_block");
 
-      // arms + legs + joints
+      // arms
       outlineRect(cx-12, torsoTop+2, cx-9, torsoTop+9, "pg_skin_block");
       fillRect(cx-11, torsoTop+3, cx-10, torsoTop+8, "pg_muscle_block");
       line(cx-11, torsoTop+3, cx-10, torsoTop+8, "pg_bone_block");
-      setOrChange(cx-9, torsoTop+2, "pg_cartilage_block");
 
       outlineRect(cx+9, torsoTop+2, cx+12, torsoTop+9, "pg_skin_block");
       fillRect(cx+10, torsoTop+3, cx+11, torsoTop+8, "pg_muscle_block");
       line(cx+10, torsoTop+3, cx+11, torsoTop+8, "pg_bone_block");
-      setOrChange(cx+9, torsoTop+2, "pg_cartilage_block");
 
+      // legs
       outlineRect(cx-5, torsoBot+1, cx-2, torsoBot+12, "pg_skin_block");
       fillRect(cx-4, torsoBot+2, cx-3, torsoBot+11, "pg_muscle_block");
       line(cx-4, torsoBot+2, cx-3, torsoBot+11, "pg_bone_block");
-      setOrChange(cx-2, torsoBot+1, "pg_cartilage_block");
 
       outlineRect(cx+2, torsoBot+1, cx+5, torsoBot+12, "pg_skin_block");
       fillRect(cx+3, torsoBot+2, cx+4, torsoBot+11, "pg_muscle_block");
       line(cx+3, torsoBot+2, cx+4, torsoBot+11, "pg_bone_block");
-      setOrChange(cx+2, torsoBot+1, "pg_cartilage_block");
 
-      // chest cavity space
+      // chest cavity
       carveRect(cx-5, torsoTop+2, cx+5, torsoTop+9);
 
       // organs
@@ -823,10 +942,10 @@
       carveRect(stL+2, stB, stR-2, stB);
       carveRect(cx-1, inT, cx+1, inT);
 
-      // poop exit
+      // poop exit hole (anus)
       carveRect(cx, inB, cx, inB+2);
 
-      // esophagus conveyor track (push left into stomach drop)
+      // esophagus track to stomach
       const beltY = stEntryY;
       const trackY = stEntryY - 1;
       carveRect(stL+1, trackY, cx, trackY);
@@ -834,15 +953,15 @@
       carveRect(stL+2, beltY, stL+3, beltY);
       carveRect(stL+2, trackY, stL+3, trackY);
 
-      // veins
-      const hx = cx, hy = torsoTop + 5;
-      for (let y=hy+1; y<=torsoTop+10; y++) setOrChange(hx, y, "pg_vein_block");
-      for (let x=hx-1; x>=cx-10; x--) setOrChange(x, hy, "pg_vein_block");
-      for (let x=hx+1; x<=cx+10; x++) setOrChange(x, hy, "pg_vein_block");
-      for (let y=torsoBot-1; y<=torsoBot+10; y++) {
-        setOrChange(cx-3, y, "pg_vein_block");
-        setOrChange(cx+3, y, "pg_vein_block");
-      }
+      // kidneys (left+right)
+      setOrChange(cx-4, torsoTop+10, "pg_kidney_block");
+      setOrChange(cx+4, torsoTop+10, "pg_kidney_block");
+
+      // bladder (small cavity near bottom center) + pee exit hole
+      const blL = cx-2, blR = cx+2, blT = torsoBot-4, blB = torsoBot-1;
+      outlineRect(blL, blT, blR, blB, "pg_bladder_wall");
+      carveRect(blL+1, blT+1, blR-1, blB-1);      // hollow bladder
+      carveRect(cx, blB, cx, blB+2);              // urethra hole downward (pee falls out)
     }
 
     elements.pg_big_human_seed = {
