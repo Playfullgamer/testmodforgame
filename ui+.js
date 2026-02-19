@@ -1,85 +1,162 @@
-/* ui+.js — UI+ Ultra v2.0 (Big + Safe + No black screens)
-
-IMPORTANT ABOUT THE FILE NAME:
-- If you load this from a URL and the filename contains "+", use "%2B" in the URL:
-  ui%2B.js
-Because many parsers treat "+" like a space and the mod won't load.
-
-Features:
-- UI+ toolbar button
-- Full-screen Mod Center overlay (enable/disable without removing)
-- Mod profiles (quick swap sets)
-- Import/Export
-- Non-overlapping Info HUD (draggable, toggleable)
-- Overlay UI scale controls
-*/
+// sbx_neo_full_ui_overhaul_v3_4.js
+// Neo Full UI Overhaul v3.4.0
+// Keeps: Elements drawer + Overhaul drawer + big readable UI + safe top offset + mods menu restyle + Ctrl+0 panic reset
+// Adds:
+// - Mods Library inside Overhaul (disable without removing; import/export; profiles-lite via export)
+// - Non-overlapping Info Bar (toggleable)
+// - Mods menu gets a safe "Open Neo Mods" button + search (no hijacking)
+// Notes:
+// - Disabling mods needs Reload to fully unload (game limitation)
 
 (() => {
   "use strict";
 
-  // ---------------------------
-  // Core helpers
-  // ---------------------------
-  const UIPlus = (window.UIPlus = window.UIPlus || {});
-  if (UIPlus.__ultra_v2_loaded) return;
-  UIPlus.__ultra_v2_loaded = true;
+  const MOD = {
+    name: "Neo Full UI Overhaul",
+    version: "3.4.0",
+    keys: {
+      settings: "sbx_neo34/settings",
+      favs: "sbx_neo34/favs",
+      recents: "sbx_neo34/recents",
+      openElements: "sbx_neo34/open_elements",
+      openOverhaul: "sbx_neo34/open_overhaul",
+      widthElements: "sbx_neo34/w_elements",
+      widthOverhaul: "sbx_neo34/w_overhaul",
+      maxElements: "sbx_neo34/max_elements",
+      maxOverhaul: "sbx_neo34/max_overhaul",
+      tab: "sbx_neo34/tab",
+      cat: "sbx_neo34/cat",
+      compact: "sbx_neo34/compact",
+      hideCats: "sbx_neo34/hide_cats",
+      uiScale: "sbx_neo34/ui_scale",
 
-  const log = (...a) => console.log("%c[UI+]", "color:#7fb0ff;font-weight:700", ...a);
-  const warn = (...a) => console.warn("%c[UI+]", "color:#ffd37f;font-weight:700", ...a);
-  const err = (...a) => console.error("%c[UI+]", "color:#ff7f7f;font-weight:700", ...a);
+      // mods library (disable without deleting)
+      modLib: "sbx_neo34/modlib",
+      modKeyGuess: "sbx_neo34/modkey_guess",
+    },
+    defaults: {
+      enable: true,
+      restyleTopUI: true,
+      hideVanillaElementUI: true,
+      openElementsOnStart: true,
+      showPreview: true,
+      showTooltips: true,
+      autoCloseOnPick: false,
+      compactView: true,
+      hideCategories: false,
+      uiScale: 1.30,
+      hotkeys: true,
+      toasts: true,
+      infoBar: true,
+      modsInOverhaul: true,
+    },
+  };
 
-  const qs = (s, r = document) => r.querySelector(s);
-  const qsa = (s, r = document) => Array.from(r.querySelectorAll(s));
-  const on = (el, ev, fn, opt) => el && el.addEventListener(ev, fn, opt);
   const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
-  const safeText = (el) => (el && (el.textContent || "")).trim();
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
-  const STORAGE = {
-    // enabled mods key guess is cached
-    enabledKeyGuess: "uiplus_enabledMods_key_guess_v1",
+  function safeParse(s, fallback) { try { return JSON.parse(s); } catch { return fallback; } }
+  function loadSettings() { return { ...MOD.defaults, ...(safeParse(localStorage.getItem(MOD.keys.settings) || "{}", {})) }; }
+  function saveSettings(s) { localStorage.setItem(MOD.keys.settings, JSON.stringify(s)); }
 
-    // our library stores mods even if disabled
-    library: "uiplus_mod_library_v2",
-
-    // profiles
-    profiles: "uiplus_mod_profiles_v2",
-    activeProfile: "uiplus_mod_active_profile_v2",
-
-    // ui
-    overlayScale: "uiplus_overlay_scale_v2",
-    hud: "uiplus_hud_v2",
-    prefs: "uiplus_prefs_v2",
-  };
-
-  const state = {
-    overlayOpen: false,
-    tab: "mods",
-    modSearch: "",
-    modSort: "enabledFirst",
-    overlayScale: Number(localStorage.getItem(STORAGE.overlayScale) || "1") || 1,
-
-    hud: {
-      enabled: true,
-      x: 18,
-      y: 74,
-      compact: false,
-      ...(safeParse(localStorage.getItem(STORAGE.hud)) || {}),
-    },
-
-    prefs: {
-      // we DO NOT override vanilla Mods button by default (safe)
-      hijackModsButton: false,
-      ...(safeParse(localStorage.getItem(STORAGE.prefs)) || {}),
-    },
-  };
-
-  function safeParse(v) {
-    try { return JSON.parse(v); } catch { return null; }
+  function loadList(key) {
+    const arr = safeParse(localStorage.getItem(key) || "[]", []);
+    return Array.isArray(arr) ? arr.filter(Boolean) : [];
   }
-  function saveHUD() { localStorage.setItem(STORAGE.hud, JSON.stringify(state.hud)); }
-  function savePrefs() { localStorage.setItem(STORAGE.prefs, JSON.stringify(state.prefs)); }
-  function saveScale() { localStorage.setItem(STORAGE.overlayScale, String(state.overlayScale)); }
+  function saveList(key, arr, cap) {
+    localStorage.setItem(key, JSON.stringify(cap ? arr.slice(0, cap) : arr));
+  }
 
+  function el(tag, attrs = {}, ...children) {
+    const n = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === "class") n.className = v;
+      else if (k === "style") n.setAttribute("style", v);
+      else if (k.startsWith("on") && typeof v === "function") n.addEventListener(k.slice(2), v);
+      else if (v != null) n.setAttribute(k, String(v));
+    }
+    for (const c of children) n.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+    return n;
+  }
+
+  function injectCss(id, cssText) {
+    $(`#${id}`)?.remove();
+    const st = el("style", { id });
+    st.textContent = cssText;
+    document.head.appendChild(st);
+  }
+
+  function onGameReady(fn) {
+    if (typeof window.runAfterLoad === "function") window.runAfterLoad(fn);
+    else window.addEventListener("load", fn, { once: true });
+  }
+
+  function waitFor(fn, timeoutMs = 20000) {
+    return new Promise((resolve, reject) => {
+      const start = performance.now();
+      const t = setInterval(() => {
+        let val = null;
+        try { val = fn(); } catch {}
+        if (val) { clearInterval(t); resolve(val); }
+        else if (performance.now() - start > timeoutMs) { clearInterval(t); reject(new Error("timeout")); }
+      }, 60);
+    });
+  }
+
+  function copyText(text) {
+    const t = String(text || "");
+    if (!t) return;
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(t).catch(() => prompt("Copy:", t));
+    } else {
+      prompt("Copy:", t);
+    }
+  }
+
+  // ---------- cleanup old / conflicting UI scripts
+  function cleanupOld() {
+    [
+      // old neo ids
+      "neo32Style","neo32Overlay","neo32Elements","neo32Overhaul","neo32EdgeL","neo32EdgeR","neo32Toast","neo32Tip",
+      "neo33Style","neo33Overlay","neo33Elements","neo33Overhaul","neo33EdgeL","neo33EdgeR","neo33Toast","neo33Tip",
+      "neo34Style","neo34Overlay","neo34Elements","neo34Overhaul","neo34EdgeL","neo34EdgeR","neo34Toast",
+      "neo33TopElements","neo33TopOverhaul","neo34TopElements","neo34TopOverhaul",
+      // other modcenter leftovers (safe remove)
+      "uiplus_overlay","uiplus_panel","uiplus_hud","uiplus_toasts",
+      "neoMCOverlay","neoModCenterOverlay"
+    ].forEach(id => $(`#${id}`)?.remove());
+
+    document.body.classList.remove("sbx-neo31","sbx-neo32","sbx-neo33","sbx-neo34","sbx-neo","sbx-pso","sbx-ohp");
+  }
+
+  // ---------- UI scale
+  function getUiScale() {
+    const s = loadSettings();
+    const raw = localStorage.getItem(MOD.keys.uiScale);
+    const v = raw == null ? s.uiScale : parseFloat(raw);
+    return clamp(Number.isFinite(v) ? v : s.uiScale, 1.0, 1.65);
+  }
+  function setUiScale(v) {
+    const next = clamp(v, 1.0, 1.65);
+    localStorage.setItem(MOD.keys.uiScale, String(next));
+    document.body.style.setProperty("--neo-ui-scale", String(next));
+    safeUpdateTopOffset();
+    toast(`UI size: ${next.toFixed(2)}`);
+  }
+
+  // ---------- toast
+  function toast(msg) {
+    if (!loadSettings().toasts) return;
+    const t = $("#neo34Toast");
+    if (!t) return;
+    t.textContent = msg;
+    t.style.display = "block";
+    clearTimeout(toast._tm);
+    toast._tm = setTimeout(() => (t.style.display = "none"), 1200);
+  }
+
+  // ---------- Mods enabled list (read/write) + library (disable without deleting)
   function looksLikeModString(s) {
     if (typeof s !== "string") return false;
     const t = s.trim().toLowerCase();
@@ -88,32 +165,16 @@ Features:
   function normalizeMods(str) {
     return String(str || "").split(";").map(s => s.trim()).filter(Boolean);
   }
-  function uniq(arr) {
-    const out = [];
-    const seen = new Set();
-    for (const x of arr) {
-      const t = String(x || "").trim();
-      if (!t || seen.has(t)) continue;
-      seen.add(t);
-      out.push(t);
-    }
-    return out;
-  }
-
-  // ---------------------------
-  // Enabled mods (game storage) — robust guess
-  // ---------------------------
   function isModsArray(v) {
     return Array.isArray(v) && v.every(x => typeof x === "string");
   }
 
   function guessEnabledModsKey() {
-    const cached = localStorage.getItem(STORAGE.enabledKeyGuess);
+    const cached = localStorage.getItem(MOD.keys.modKeyGuess);
     if (cached && localStorage.getItem(cached) != null) return cached;
 
     const candidates = [
-      "enabledMods", "mods", "modList", "modsEnabled",
-      "enabled_mods", "enabled-mods", "sb_mods", "sbmods"
+      "enabledMods","mods","modList","modsEnabled","enabled_mods","enabled-mods","sb_mods","sbmods"
     ];
 
     for (const k of candidates) {
@@ -122,19 +183,19 @@ Features:
       try {
         const v = JSON.parse(raw);
         if (isModsArray(v) && v.some(looksLikeModString)) {
-          localStorage.setItem(STORAGE.enabledKeyGuess, k);
+          localStorage.setItem(MOD.keys.modKeyGuess, k);
           return k;
         }
       } catch {
         const parts = normalizeMods(raw);
         if (parts.length && parts.some(looksLikeModString)) {
-          localStorage.setItem(STORAGE.enabledKeyGuess, k);
+          localStorage.setItem(MOD.keys.modKeyGuess, k);
           return k;
         }
       }
     }
 
-    // fallback: scan everything
+    // scan localStorage for something that looks like mods
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
       if (!k) continue;
@@ -144,24 +205,23 @@ Features:
       try {
         const v = JSON.parse(raw);
         if (isModsArray(v) && v.some(looksLikeModString)) {
-          localStorage.setItem(STORAGE.enabledKeyGuess, k);
+          localStorage.setItem(MOD.keys.modKeyGuess, k);
           return k;
         }
       } catch {
         const parts = normalizeMods(raw);
         if (parts.length && parts.some(looksLikeModString)) {
-          localStorage.setItem(STORAGE.enabledKeyGuess, k);
+          localStorage.setItem(MOD.keys.modKeyGuess, k);
           return k;
         }
       }
     }
-    // default guess
-    localStorage.setItem(STORAGE.enabledKeyGuess, "enabledMods");
+
+    localStorage.setItem(MOD.keys.modKeyGuess, "enabledMods");
     return "enabledMods";
   }
 
   function readEnabledMods() {
-    // some builds also keep a global enabledMods array
     if (Array.isArray(window.enabledMods)) return window.enabledMods.slice();
     const k = guessEnabledModsKey();
     const raw = localStorage.getItem(k);
@@ -174,68 +234,45 @@ Features:
   }
 
   function writeEnabledMods(list) {
-    const clean = uniq(list);
+    const clean = Array.from(new Set(list.map(s => String(s || "").trim()).filter(Boolean)));
     if (Array.isArray(window.enabledMods)) window.enabledMods = clean.slice();
     const k = guessEnabledModsKey();
-    try {
-      localStorage.setItem(k, JSON.stringify(clean));
-    } catch {
-      localStorage.setItem(k, clean.join(";"));
-    }
+    try { localStorage.setItem(k, JSON.stringify(clean)); }
+    catch { localStorage.setItem(k, clean.join(";")); }
     return k;
   }
 
-  // ---------------------------
-  // Library: store mods even when disabled
-  // entry = { id: string, enabled: boolean, addedAt: number, note?: string }
-  // ---------------------------
-  function readLibrary() {
-    const raw = localStorage.getItem(STORAGE.library);
-    if (!raw) return [];
-    const v = safeParse(raw);
+  // library entry: { id, enabled, addedAt }
+  function readModLib() {
+    const v = safeParse(localStorage.getItem(MOD.keys.modLib) || "[]", []);
     if (!Array.isArray(v)) return [];
     return v
       .filter(x => x && typeof x.id === "string")
-      .map(x => ({
-        id: x.id.trim(),
-        enabled: !!x.enabled,
-        addedAt: Number(x.addedAt || Date.now()),
-        note: typeof x.note === "string" ? x.note : ""
-      }))
+      .map(x => ({ id: x.id.trim(), enabled: !!x.enabled, addedAt: Number(x.addedAt || Date.now()) }))
       .filter(x => x.id);
   }
-
-  function writeLibrary(lib) {
-    const out = [];
+  function writeModLib(arr) {
     const seen = new Set();
-    for (const it of lib || []) {
+    const out = [];
+    for (const it of arr || []) {
       const id = String(it?.id || "").trim();
       if (!id || seen.has(id)) continue;
       seen.add(id);
-      out.push({
-        id,
-        enabled: !!it.enabled,
-        addedAt: Number(it.addedAt || Date.now()),
-        note: typeof it.note === "string" ? it.note : ""
-      });
+      out.push({ id, enabled: !!it.enabled, addedAt: Number(it.addedAt || Date.now()) });
     }
-    localStorage.setItem(STORAGE.library, JSON.stringify(out));
+    localStorage.setItem(MOD.keys.modLib, JSON.stringify(out));
     return out;
   }
-
-  function syncLibraryFromEnabled() {
+  function syncModLibFromEnabled() {
     const enabled = new Set(readEnabledMods());
-    const lib = readLibrary();
+    const lib = readModLib();
     const map = new Map(lib.map(x => [x.id, x]));
-
-    // ensure enabled mods exist and are marked enabled
     for (const id of enabled) {
-      const existing = map.get(id);
-      if (existing) existing.enabled = true;
-      else map.set(id, { id, enabled: true, addedAt: Date.now(), note: "" });
+      const ex = map.get(id);
+      if (ex) ex.enabled = true;
+      else map.set(id, { id, enabled: true, addedAt: Date.now() });
     }
-
-    // preserve old order then append missing enabled
+    // preserve order, append missing enabled
     const out = [];
     const seen = new Set();
     for (const x of lib) {
@@ -246,1077 +283,1213 @@ Features:
     for (const id of enabled) {
       if (!seen.has(id)) out.push(map.get(id));
     }
-    writeLibrary(out);
+    writeModLib(out);
+  }
+  function applyModLibToEnabled() {
+    const lib = readModLib();
+    writeEnabledMods(lib.filter(x => x.enabled).map(x => x.id));
   }
 
-  function applyLibraryToEnabled() {
-    const lib = readLibrary();
-    const enabled = lib.filter(x => x.enabled).map(x => x.id);
-    writeEnabledMods(enabled);
+  // ---------- CSS (safe: no display:flex overrides on #controls)
+  function cssNeo() {
+    return `
+body.sbx-neo34{
+  --neo-ui-scale: ${getUiScale()};
+  --neo-top: 110px;
+  --neo-w-e: 520px;
+  --neo-w-o: 520px;
+
+  --neo-panel: rgba(18,21,28,.92);
+  --neo-panel2: rgba(14,16,22,.92);
+  --neo-border: rgba(255,255,255,.12);
+  --neo-border2: rgba(255,255,255,.08);
+  --neo-text: rgba(255,255,255,.92);
+  --neo-muted: rgba(255,255,255,.62);
+  --neo-shadow: 0 16px 48px rgba(0,0,0,.55);
+  --neo-shadow2: 0 10px 30px rgba(0,0,0,.45);
+}
+
+body.sbx-neo34.neo-hide-vanilla #categoryControls,
+body.sbx-neo34.neo-hide-vanilla #elementControls{ display:none !important; }
+
+/* BIG readable (font + padding only; no layout engine changes) */
+body.sbx-neo34 #toolControls,
+body.sbx-neo34 #controls{
+  font-size: calc(14px * var(--neo-ui-scale));
+}
+body.sbx-neo34 #toolControls .controlButton,
+body.sbx-neo34 #controls .controlButton,
+body.sbx-neo34 #controls button{
+  font-size: calc(14px * var(--neo-ui-scale)) !important;
+  padding: calc(6px * var(--neo-ui-scale)) calc(10px * var(--neo-ui-scale)) !important;
+  min-height: calc(34px * var(--neo-ui-scale));
+  border-radius: calc(12px * var(--neo-ui-scale)) !important;
+}
+
+/* New-style look */
+body.sbx-neo34.neo-topstyle #toolControls .controlButton,
+body.sbx-neo34.neo-topstyle #controls .controlButton{
+  border: 1px solid var(--neo-border2) !important;
+  background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04)) !important;
+  color: var(--neo-text) !important;
+  box-shadow: 0 6px 16px rgba(0,0,0,.25);
+}
+body.sbx-neo34.neo-topstyle #controls button:not(.controlButton){
+  border: 1px solid rgba(255,255,255,.20) !important;
+  box-shadow: 0 6px 14px rgba(0,0,0,.20);
+}
+
+/* Mods menu: style ONLY (no forced sizes) */
+body.sbx-neo34.neo-topstyle #modManager,
+body.sbx-neo34.neo-topstyle #modManagerScreen,
+body.sbx-neo34.neo-topstyle #modMenu,
+body.sbx-neo34.neo-topstyle #modMenuScreen{
+  border-radius: 18px !important;
+  border: 1px solid var(--neo-border) !important;
+  background: var(--neo-panel) !important;
+  box-shadow: var(--neo-shadow) !important;
+  color: var(--neo-text) !important;
+}
+
+/* Our mod search bar injected into vanilla mod menu */
+#neo34ModTools{
+  display:flex;
+  gap: 10px;
+  align-items:center;
+  padding: 10px 10px;
+  margin-bottom: 10px;
+  border-radius: 16px;
+  background: rgba(0,0,0,.18);
+  border: 1px solid rgba(255,255,255,.10);
+}
+#neo34ModSearch{
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.05);
+  color: rgba(255,255,255,.92);
+  outline: none;
+}
+#neo34ModSearch::placeholder{ color: rgba(255,255,255,.60); }
+.neo34MiniBtn{
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04));
+  color: rgba(255,255,255,.92);
+  cursor:pointer;
+}
+
+/* Overlay */
+#neo34Overlay{
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.40);
+  z-index: 999980;
+  display:none;
+  pointer-events:none;
+}
+#neo34Overlay.open{
+  display:block;
+  pointer-events:auto;
+}
+
+/* Edge tabs */
+#neo34EdgeL, #neo34EdgeR{
+  position: fixed;
+  top: calc(var(--neo-top) + 12px);
+  z-index: 999995;
+  user-select: none;
+  cursor: pointer;
+  color: var(--neo-text);
+  background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04));
+  border: 1px solid var(--neo-border);
+  box-shadow: var(--neo-shadow2);
+  padding: 10px 10px;
+  border-radius: 14px;
+  opacity: .96;
+}
+#neo34EdgeL{ left: 8px; }
+#neo34EdgeR{ right: 8px; }
+#neo34EdgeL .lbl, #neo34EdgeR .lbl{ display:block; font-weight:900; letter-spacing:.6px; font-size:12px; }
+#neo34EdgeL .sub, #neo34EdgeR .sub{ display:block; font-size:11px; color: var(--neo-muted); margin-top:2px; }
+#neo34EdgeL.hidden, #neo34EdgeR.hidden{ display:none; }
+
+/* Drawers */
+.neo34Drawer{
+  position: fixed;
+  top: var(--neo-top);
+  height: calc(100vh - var(--neo-top));
+  z-index: 999990;
+  color: var(--neo-text);
+  background: var(--neo-panel);
+  border: 1px solid var(--neo-border);
+  box-shadow: var(--neo-shadow);
+  border-radius: 18px;
+  display:flex;
+  flex-direction: column;
+  max-width: calc(100vw - 20px);
+  min-height: 280px;
+}
+#neo34Elements{
+  left: 10px;
+  width: var(--neo-w-e);
+  transform: translateX(-110%);
+  transition: transform 160ms ease;
+}
+#neo34Elements.open{ transform: translateX(0); }
+
+#neo34Overhaul{
+  right: 10px;
+  width: var(--neo-w-o);
+  transform: translateX(110%);
+  transition: transform 160ms ease;
+}
+#neo34Overhaul.open{ transform: translateX(0); }
+
+.neo34Drawer.max{
+  left: 10px !important;
+  right: 10px !important;
+  width: auto !important;
+}
+
+/* Header */
+.neo34Hdr{
+  display:flex; align-items:center; justify-content:space-between;
+  gap:8px;
+  padding:12px;
+  border-bottom: 1px solid var(--neo-border2);
+  background: rgba(0,0,0,.10);
+  border-top-left-radius: 18px;
+  border-top-right-radius: 18px;
+}
+.neo34Title{ display:flex; flex-direction:column; gap:2px; }
+.neo34Title .t{ font-weight:900; letter-spacing:.6px; }
+.neo34Title .s{ font-size:12px; color: var(--neo-muted); }
+.neo34Btns{ display:flex; gap:8px; }
+.neo34Btn{
+  border-radius:12px;
+  border: 1px solid var(--neo-border2);
+  background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04));
+  color: var(--neo-text);
+  padding:8px 10px;
+  cursor:pointer;
+}
+
+/* Tabs + Search */
+.neo34Tabs{ display:flex; gap:8px; padding:10px 12px 0 12px; }
+.neo34Tab{
+  flex:1; text-align:center;
+  padding:8px 10px;
+  border-radius:999px;
+  border:1px solid var(--neo-border2);
+  background: rgba(255,255,255,.04);
+  cursor:pointer;
+}
+.neo34Tab.active{ border-color: rgba(76,201,240,.55); background: rgba(76,201,240,.10); }
+
+.neo34SearchRow{ display:flex; gap:8px; padding:10px 12px 12px 12px; border-bottom: 1px solid var(--neo-border2); }
+#neo34Search{
+  flex:1;
+  border-radius:14px;
+  border:1px solid var(--neo-border2);
+  background: rgba(255,255,255,.05);
+  color: var(--neo-text);
+  padding:10px 12px;
+  outline:none;
+}
+
+/* Body layout */
+#neo34ElBody{
+  flex:1;
+  display:grid;
+  grid-template-columns: 170px 1fr;
+  gap:10px;
+  padding:10px 12px 12px 12px;
+  overflow:hidden;
+  min-height: 220px;
+}
+body.sbx-neo34.neo-hidecats #neo34ElBody{ grid-template-columns: 1fr; }
+body.sbx-neo34.neo-hidecats #neo34Cats{ display:none; }
+
+#neo34Cats{
+  border:1px solid var(--neo-border2);
+  border-radius:14px;
+  background: var(--neo-panel2);
+  overflow:auto;
+  padding:8px;
+}
+
+#neo34ElRight{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  overflow:hidden;
+  min-height: 220px;
+}
+
+#neo34ElGridWrap{
+  flex: 1;
+  border:1px solid var(--neo-border2);
+  border-radius:14px;
+  background: var(--neo-panel2);
+  overflow:hidden;
+  display:flex;
+  flex-direction:column;
+  min-height: 200px;
+}
+#neo34ElGridHead{
+  padding:10px;
+  border-bottom:1px solid var(--neo-border2);
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:10px;
+}
+#neo34Count{ font-size:12px; color: var(--neo-muted); }
+
+#neo34ElGrid{
+  padding:10px;
+  overflow:auto;
+  display:grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap:10px;
+  min-height: 180px;
+}
+body.sbx-neo34.neo-compact #neo34ElGrid{ grid-template-columns: repeat(auto-fill, minmax(125px, 1fr)); gap:8px; }
+
+.neo34ElBtn{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:10px;
+  border-radius:14px;
+  border:1px solid var(--neo-border2);
+  background: linear-gradient(180deg, rgba(255,255,255,.09), rgba(255,255,255,.03));
+  cursor:pointer;
+}
+.neo34Dot{ width:14px; height:14px; border-radius:999px; box-shadow: inset 0 0 0 2px rgba(0,0,0,.25); }
+.neo34Name{ overflow:hidden; text-overflow: ellipsis; white-space: nowrap; }
+.neo34Star{ margin-left:auto; opacity:.9; }
+
+#neo34Preview{
+  border:1px solid var(--neo-border2);
+  border-radius:14px;
+  background: rgba(255,255,255,.04);
+  padding:10px;
+  display:none;
+}
+#neo34Preview.show{ display:block; }
+#neo34Preview .muted{ color: var(--neo-muted); font-size:12px; }
+
+/* Toast */
+#neo34Toast{
+  position: fixed; left: 12px; bottom: 12px;
+  z-index: 999999; display:none;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(12,14,18,.94);
+  border: 1px solid var(--neo-border);
+  color: var(--neo-text);
+  box-shadow: var(--neo-shadow2);
+  font-size: 12px;
+}
+
+/* Overhaul body */
+#neo34OverBody{ flex:1; overflow:auto; padding:10px 12px 12px 12px; }
+.neo34Section{ margin: 12px 0 8px 0; font-weight:900; letter-spacing:.4px; }
+.neo34Toggle{ display:flex; gap:10px; align-items:flex-start; padding:10px; border-radius:14px; cursor:pointer; }
+.neo34Toggle:hover{ background: rgba(255,255,255,.05); }
+.neo34Small{ font-size:12px; color: var(--neo-muted); margin-top:2px; }
+
+/* Mods library UI inside Overhaul */
+#neo34ModsWrap{
+  border: 1px solid var(--neo-border2);
+  border-radius: 14px;
+  background: rgba(0,0,0,.10);
+  padding: 10px;
+}
+#neo34ModsTop{
+  display:flex;
+  gap:10px;
+  flex-wrap: wrap;
+  align-items:center;
+}
+#neo34ModsAdd, #neo34ModsFind{
+  flex: 1;
+  min-width: 220px;
+  border-radius: 14px;
+  border: 1px solid var(--neo-border2);
+  background: rgba(255,255,255,.05);
+  color: var(--neo-text);
+  padding: 10px 12px;
+  outline: none;
+}
+.neo34ModsRow{
+  display:flex;
+  gap:10px;
+  align-items:center;
+  padding: 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(0,0,0,.14);
+  margin-top: 10px;
+}
+.neo34ModsRow b{
+  flex:1;
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.neo34Badge{
+  font-size: 11px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border:1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.06);
+  color: rgba(255,255,255,.72);
+}
+.neo34Badge.ok{ border-color: rgba(80,220,140,.35); background: rgba(80,220,140,.12); color: rgba(210,255,230,.9); }
+.neo34Badge.warn{ border-color: rgba(255,200,90,.35); background: rgba(255,200,90,.12); color: rgba(255,240,210,.92); }
+
+/* Info bar (never blocks clicks) */
+#neo34Info{
+  position: fixed;
+  z-index: 999970;
+  right: 10px;
+  top: 10px;
+  pointer-events: none;
+  display:none;
+}
+#neo34Info.on{ display:block; }
+#neo34Info .pill{
+  max-width: min(560px, 92vw);
+  border: 1px solid rgba(255,255,255,.16);
+  background: rgba(12,12,14,.62);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-radius: 999px;
+  padding: 8px 12px;
+  display:flex;
+  gap: 10px;
+  align-items:center;
+  flex-wrap: wrap;
+  box-shadow: 0 14px 40px rgba(0,0,0,.35);
+  color: rgba(255,255,255,.90);
+  font-size: 12px;
+}
+#neo34Info b{ color: rgba(255,255,255,.92); }
+#neo34Info span{ color: rgba(255,255,255,.74); }
+`;
   }
 
-  // ---------------------------
-  // Profiles
-  // profile = { name, mods: [{id, enabled}] }
-  // ---------------------------
-  function readProfiles() {
-    const raw = localStorage.getItem(STORAGE.profiles);
-    const v = safeParse(raw);
-    if (!Array.isArray(v)) return [];
-    return v
-      .filter(p => p && typeof p.name === "string" && Array.isArray(p.mods))
-      .map(p => ({
-        name: p.name.trim() || "Unnamed",
-        mods: p.mods
-          .filter(m => m && typeof m.id === "string")
-          .map(m => ({ id: m.id.trim(), enabled: !!m.enabled }))
-          .filter(m => m.id)
-      }));
+  // ---------- element helpers
+  function elementColor(name) {
+    const def = window.elements?.[name];
+    const c = def?.color;
+    if (Array.isArray(c) && c.length) return c[0];
+    if (typeof c === "string") return c;
+    return "rgba(255,255,255,.35)";
+  }
+  function prettyName(name) {
+    const def = window.elements?.[name];
+    const candidate = def?.name || def?.displayName || def?.label;
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+    return String(name).replace(/_/g, " ");
   }
 
-  function writeProfiles(p) {
+  function buildIndex() {
+    const byCat = new Map();
+    const all = [];
+    for (const [name, def] of Object.entries(window.elements || {})) {
+      if (!def || def.hidden) continue;
+      const cat = def.category || "other";
+      if (!byCat.has(cat)) byCat.set(cat, []);
+      byCat.get(cat).push(name);
+      all.push(name);
+    }
+    const sortFn = (a, b) => prettyName(a).localeCompare(prettyName(b));
+    for (const arr of byCat.values()) arr.sort(sortFn);
+    all.sort(sortFn);
+    const cats = ["all", ...Array.from(byCat.keys()).sort((a, b) => String(a).localeCompare(String(b)))];
+    return { byCat, all, cats };
+  }
+
+  function buildCategoryLabelsFromDOM() {
+    const map = new Map();
+    for (const b of $$(".categoryButton")) {
+      const id = b.id || "";
+      const key = id.startsWith("categoryButton-") ? id.replace("categoryButton-", "") : (b.getAttribute("category") || b.getAttribute("data-category"));
+      if (!key) continue;
+      const label = (b.textContent || "").trim();
+      if (label) map.set(key, label);
+    }
+    return map;
+  }
+
+  // ---------- state
+  let currentTab = localStorage.getItem(MOD.keys.tab) || "all";
+  let currentCat = localStorage.getItem(MOD.keys.cat) || "all";
+
+  const getFavs = () => loadList(MOD.keys.favs);
+  const setFavs = (a) => saveList(MOD.keys.favs, a, 40);
+  const getRecents = () => loadList(MOD.keys.recents);
+  const setRecents = (a) => saveList(MOD.keys.recents, a, 24);
+
+  function isCompact() {
+    const raw = localStorage.getItem(MOD.keys.compact);
+    return raw == null ? !!loadSettings().compactView : raw === "1";
+  }
+  function isHideCats() {
+    const raw = localStorage.getItem(MOD.keys.hideCats);
+    return raw == null ? !!loadSettings().hideCategories : raw === "1";
+  }
+  function applyViewFlags() {
+    document.body.classList.toggle("neo-compact", isCompact());
+    document.body.classList.toggle("neo-hidecats", isHideCats());
+  }
+
+  // ---------- drawers + layout
+  function isOpenElements() { return localStorage.getItem(MOD.keys.openElements) === "1"; }
+  function isOpenOverhaul() { return localStorage.getItem(MOD.keys.openOverhaul) === "1"; }
+  function isMax(which) { return localStorage.getItem(which === "elements" ? MOD.keys.maxElements : MOD.keys.maxOverhaul) === "1"; }
+  function desiredWidth(key, fallback) { return clamp(parseInt(localStorage.getItem(key) || String(fallback), 10) || fallback, 340, 900); }
+
+  function syncOverlay() {
+    const any = isOpenElements() || isOpenOverhaul();
+    $("#neo34Overlay")?.classList.toggle("open", any);
+  }
+  function syncEdgeTabs() {
+    const enabled = loadSettings().enable;
+    $("#neo34EdgeL")?.classList.toggle("hidden", !enabled || isOpenElements());
+    $("#neo34EdgeR")?.classList.toggle("hidden", !enabled || isOpenOverhaul());
+  }
+
+  function setOpenElements(open) {
+    if (open && window.innerWidth < 900) setOpenOverhaul(false);
+    localStorage.setItem(MOD.keys.openElements, open ? "1" : "0");
+    $("#neo34Elements")?.classList.toggle("open", open);
+    safeUpdateTopOffset();
+    updateLayout();
+  }
+  function setOpenOverhaul(open) {
+    if (open && window.innerWidth < 900) setOpenElements(false);
+    localStorage.setItem(MOD.keys.openOverhaul, open ? "1" : "0");
+    $("#neo34Overhaul")?.classList.toggle("open", open);
+    safeUpdateTopOffset();
+    updateLayout();
+  }
+  function setMax(which, on) {
+    localStorage.setItem(which === "elements" ? MOD.keys.maxElements : MOD.keys.maxOverhaul, on ? "1" : "0");
+    const id = which === "elements" ? "#neo34Elements" : "#neo34Overhaul";
+    $(id)?.classList.toggle("max", on);
+
+    // one-max-at-a-time
+    if (on) {
+      if (which === "elements") {
+        localStorage.setItem(MOD.keys.maxOverhaul, "0");
+        $("#neo34Overhaul")?.classList.remove("max");
+        setOpenOverhaul(false);
+        setOpenElements(true);
+      } else {
+        localStorage.setItem(MOD.keys.maxElements, "0");
+        $("#neo34Elements")?.classList.remove("max");
+        setOpenElements(false);
+        setOpenOverhaul(true);
+      }
+    }
+    updateLayout();
+  }
+
+  function updateLayout() {
+    const openE = isOpenElements();
+    const openO = isOpenOverhaul();
+    const maxE = isMax("elements");
+    const maxO = isMax("overhaul");
+
+    let wE = desiredWidth(MOD.keys.widthElements, 520);
+    let wO = desiredWidth(MOD.keys.widthOverhaul, 520);
+
+    if (!maxE && !maxO && openE && openO) {
+      const vw = window.innerWidth;
+      const available = Math.max(360, vw - 32);
+      const half = Math.max(360, Math.floor((available - 12) / 2));
+      wE = Math.min(wE, half);
+      wO = Math.min(wO, half);
+    }
+
+    document.body.style.setProperty("--neo-w-e", `${wE}px`);
+    document.body.style.setProperty("--neo-w-o", `${wO}px`);
+
+    syncOverlay();
+    syncEdgeTabs();
+  }
+
+  // ---------- SAFE top offset (fixes drawer too short)
+  function safeUpdateTopOffset() {
+    const controls = $("#controls");
+    const tool = $("#toolControls");
+    if (!controls && !tool) return;
+
+    let top = 90;
+    if (controls) top = Math.max(top, Math.round(controls.getBoundingClientRect().bottom) + 10);
+    if (tool) top = Math.max(top, Math.round(tool.getBoundingClientRect().bottom) + 10);
+
+    const maxTop = Math.floor(window.innerHeight * 0.32);
+    top = clamp(top, 70, maxTop);
+
+    document.body.style.setProperty("--neo-top", `${top}px`);
+
+    // position info bar under toolbar but above drawers, never blocking clicks
+    const info = $("#neo34Info");
+    if (info) {
+      const infoTop = Math.max(10, top - 44);
+      info.style.top = `${infoTop}px`;
+    }
+  }
+
+  // ---------- Info bar
+  function infoGet(...names) {
+    for (const n of names) if (n in window) return window[n];
+    return undefined;
+  }
+  function renderInfoBar() {
+    const s = loadSettings();
+    const info = $("#neo34Info");
+    if (!info) return;
+    info.classList.toggle("on", !!s.infoBar);
+
+    if (!s.infoBar) return;
+
+    const elName = infoGet("currentElement","element","selectedElement") ?? "-";
+    const size = infoGet("mouseSize","cursorSize","brushSize") ?? "-";
+    const replace = infoGet("replaceMode","replace","replacing");
+    const paused = infoGet("paused","isPaused","pause");
+    const tps = infoGet("tps","TPS","tickSpeed");
+
+    const pill = $(".pill", info);
+    if (!pill) return;
+    pill.innerHTML = `
+      <span><b>Elem:</b> ${String(elName)}</span>
+      <span><b>Size:</b> ${String(size)}</span>
+      <span><b>Replace:</b> ${typeof replace === "boolean" ? (replace ? "On" : "Off") : String(replace ?? "-")}</span>
+      <span><b>Paused:</b> ${typeof paused === "boolean" ? (paused ? "Yes" : "No") : String(paused ?? "-")}</span>
+      <span><b>TPS:</b> ${String(tps ?? "-")}</span>
+    `;
+  }
+
+  // ---------- UI build
+  function ensureUI() {
+    if ($("#neo34Elements")) return;
+
+    document.body.classList.add("sbx-neo34");
+
+    document.body.appendChild(el("div", { id: "neo34Overlay", onclick: () => { setOpenElements(false); setOpenOverhaul(false); } }));
+    document.body.appendChild(el("div", { id: "neo34EdgeL", onclick: () => setOpenElements(true), title: "Open Elements (B)" },
+      el("span", { class: "lbl" }, "ELEMENTS"), el("span", { class: "sub" }, "Open")));
+    document.body.appendChild(el("div", { id: "neo34EdgeR", onclick: () => setOpenOverhaul(true), title: "Open Overhaul (O)" },
+      el("span", { class: "lbl" }, "OVERHAUL"), el("span", { class: "sub" }, "Settings")));
+    document.body.appendChild(el("div", { id: "neo34Toast" }));
+
+    // info bar (never blocks clicks)
+    document.body.appendChild(el("div", { id: "neo34Info" }, el("div", { class: "pill" }, "")));
+
+    const elements = el("div", { id: "neo34Elements", class: "neo34Drawer" },
+      el("div", { class: "neo34Hdr" },
+        el("div", { class: "neo34Title" },
+          el("div", { class: "t" }, "ELEMENTS"),
+          el("div", { class: "s" }, "Scroll + click works (fixed)"))
+        ,
+        el("div", { class: "neo34Btns" },
+          el("button", { class: "neo34Btn", onclick: () => { localStorage.setItem(MOD.keys.compact, isCompact() ? "0" : "1"); applyViewFlags(); renderElements(); } }, "▦"),
+          el("button", { class: "neo34Btn", onclick: () => { localStorage.setItem(MOD.keys.hideCats, isHideCats() ? "0" : "1"); applyViewFlags(); } }, "☰"),
+          el("button", { class: "neo34Btn", onclick: () => setMax("elements", !isMax("elements")) }, "⤢"),
+          el("button", { class: "neo34Btn", onclick: () => setOpenOverhaul(true) }, "⚙"),
+          el("button", { class: "neo34Btn", onclick: () => setOpenElements(false) }, "×"),
+        )
+      ),
+      el("div", { class: "neo34Tabs" },
+        el("div", { class: "neo34Tab", id: "neo34TabAll", onclick: () => setTab("all") }, "All"),
+        el("div", { class: "neo34Tab", id: "neo34TabFav", onclick: () => setTab("fav") }, "Favorites"),
+        el("div", { class: "neo34Tab", id: "neo34TabRec", onclick: () => setTab("recent") }, "Recents"),
+      ),
+      el("div", { class: "neo34SearchRow" },
+        el("input", { id: "neo34Search", type: "text", placeholder: "Search elements…" }),
+        el("button", { class: "neo34Btn", onclick: () => { $("#neo34Search").value = ""; renderElements(); } }, "×"),
+      ),
+      el("div", { id: "neo34ElBody" },
+        el("div", { id: "neo34Cats" }),
+        el("div", { id: "neo34ElRight" },
+          el("div", { id: "neo34ElGridWrap" },
+            el("div", { id: "neo34ElGridHead" },
+              el("div", { id: "neo34Count" }, ""),
+              el("div", { style: "display:flex; gap:8px; align-items:center;" },
+                el("button", { class: "neo34Btn", onclick: () => setOpenElements(false) }, "Hide"),
+              )
+            ),
+            el("div", { id: "neo34ElGrid" })
+          ),
+          el("div", { id: "neo34Preview" })
+        )
+      )
+    );
+
+    const overhaul = el("div", { id: "neo34Overhaul", class: "neo34Drawer" },
+      el("div", { class: "neo34Hdr" },
+        el("div", { class: "neo34Title" },
+          el("div", { class: "t" }, "OVERHAUL"),
+          el("div", { class: "s" }, "Ctrl+0 = panic reset")),
+        el("div", { class: "neo34Btns" },
+          el("button", { class: "neo34Btn", onclick: () => setMax("overhaul", !isMax("overhaul")) }, "⤢"),
+          el("button", { class: "neo34Btn", onclick: () => setOpenElements(true) }, "☰"),
+          el("button", { class: "neo34Btn", onclick: () => setOpenOverhaul(false) }, "×"),
+        )
+      ),
+      el("div", { id: "neo34OverBody" })
+    );
+
+    document.body.append(elements, overhaul);
+
+    $("#neo34Search").addEventListener("input", () => renderElements());
+  }
+
+  function addTopButtons() {
+    const tc = $("#toolControls");
+    if (!tc) return;
+
+    if (!$("#neo34TopElements")) {
+      const b = el("button", { id: "neo34TopElements", class: "controlButton", onclick: () => setOpenElements(!isOpenElements()) }, "☰ Elements");
+      tc.prepend(b);
+    }
+    if (!$("#neo34TopOverhaul")) {
+      const b = el("button", { id: "neo34TopOverhaul", class: "controlButton", onclick: () => setOpenOverhaul(!isOpenOverhaul()) }, "⚙ Overhaul");
+      tc.appendChild(b);
+    }
+  }
+
+  // ---------- tabs / cats / render
+  function setTab(t) {
+    currentTab = t;
+    localStorage.setItem(MOD.keys.tab, t);
+    $("#neo34TabAll")?.classList.toggle("active", t === "all");
+    $("#neo34TabFav")?.classList.toggle("active", t === "fav");
+    $("#neo34TabRec")?.classList.toggle("active", t === "recent");
+    renderCats();
+    renderElements();
+  }
+  function setCat(c) {
+    currentCat = c;
+    localStorage.setItem(MOD.keys.cat, c);
+    renderCats();
+    renderElements();
+  }
+
+  function renderCats() {
+    const wrap = $("#neo34Cats");
+    if (!wrap) return;
+    const { cats } = buildIndex();
+    const labelMap = buildCategoryLabelsFromDOM();
+
+    wrap.innerHTML = "";
+    for (const c of cats) {
+      const label = (c === "all") ? "All" : (labelMap.get(c) || String(c).replace(/_/g, " "));
+      const btn = el("button", { class: `neo34ElBtn`, style: `justify-content:flex-start; width:100%;` }, label);
+      btn.onclick = () => setCat(c);
+      if (currentCat === c) btn.style.outline = "2px solid rgba(167,139,250,.45)";
+      wrap.appendChild(btn);
+    }
+  }
+
+  function tabList({ all, byCat }) {
+    const favs = getFavs().filter(n => window.elements?.[n]);
+    const rec = getRecents().filter(n => window.elements?.[n]);
+    if (currentTab === "fav") return favs;
+    if (currentTab === "recent") return rec;
+    if (currentCat === "all") return all;
+    return byCat.get(currentCat) || [];
+  }
+
+  function inCat(def) {
+    if (currentCat === "all") return true;
+    return String(def?.category || "other") === String(currentCat);
+  }
+
+  function renderElements() {
+    const grid = $("#neo34ElGrid");
+    const count = $("#neo34Count");
+    if (!grid) return;
+
+    const query = ($("#neo34Search")?.value || "").trim().toLowerCase();
+    const favSet = new Set(getFavs());
+
+    const { all, byCat } = buildIndex();
+    let list = tabList({ all, byCat });
+
+    list = list.filter(n => {
+      const def = window.elements?.[n];
+      if (!def || def.hidden) return false;
+      return inCat(def);
+    });
+
+    if (query) {
+      list = list.filter(n => {
+        const disp = prettyName(n).toLowerCase();
+        return disp.includes(query) || String(n).toLowerCase().includes(query);
+      });
+    }
+
+    grid.innerHTML = "";
+    let shown = 0;
+
+    for (const name of list) {
+      const def = window.elements?.[name];
+      if (!def || def.hidden) continue;
+
+      const btn = el("button", { class: "neo34ElBtn" });
+      btn.appendChild(el("span", { class: "neo34Dot", style: `background:${elementColor(name)};` }));
+      btn.appendChild(el("span", { class: "neo34Name" }, prettyName(name)));
+      if (favSet.has(name)) btn.appendChild(el("span", { class: "neo34Star" }, "★"));
+
+      btn.onclick = () => {
+        if (typeof window.selectElement === "function") window.selectElement(name);
+        const r = getRecents();
+        setRecents([name, ...r.filter(x => x !== name)], 24);
+        toast(`Selected: ${prettyName(name)}`);
+        if (loadSettings().autoCloseOnPick) setOpenElements(false);
+      };
+
+      // right click toggles favorite
+      btn.oncontextmenu = (ev) => {
+        ev.preventDefault();
+        const favs = getFavs();
+        const i = favs.indexOf(name);
+        if (i >= 0) favs.splice(i, 1); else favs.unshift(name);
+        setFavs(favs);
+        renderElements();
+      };
+
+      grid.appendChild(btn);
+      shown++;
+    }
+
+    if (count) count.textContent = `${shown} shown • right-click = favorite`;
+
+    const prev = $("#neo34Preview");
+    if (prev) {
+      prev.classList.toggle("show", !!loadSettings().showPreview);
+      if (!shown) prev.innerHTML = `<div class="muted">No elements match.</div>`;
+    }
+  }
+
+  // ---------- Overhaul panel (Settings + Mods Library)
+  function buildOverhaulPanel() {
+    const body = $("#neo34OverBody");
+    if (!body) return;
+    body.innerHTML = "";
+
+    const s = loadSettings();
+
+    const section = (t) => el("div", { class: "neo34Section" }, t);
+    const toggle = (key, title, desc) => {
+      const id = `neo34_${key}`;
+      return el("label", { class: "neo34Toggle", for: id },
+        el("input", {
+          id, type: "checkbox",
+          checked: s[key] ? "checked" : null,
+          onchange: (ev) => {
+            const next = loadSettings();
+            next[key] = !!ev.target.checked;
+            saveSettings(next);
+            liveApply();
+          }
+        }),
+        el("div", {}, el("div", { style: "font-weight:800;" }, title), el("div", { class: "neo34Small" }, desc))
+      );
+    };
+
+    body.append(
+      section("UI Size"),
+      el("div", { class: "neo34Toggle", style: "cursor:default;" },
+        el("div", { style: "min-width:18px;" }),
+        el("div", { style: "width:100%;" },
+          el("div", { style: "font-weight:800;" }, `UI scale: ${getUiScale().toFixed(2)}`),
+          el("div", { class: "neo34Small" }, "Bigger text/buttons without breaking layout"),
+          el("div", { style: "display:flex; gap:10px; align-items:center; margin-top:10px;" },
+            el("button", { class: "neo34Btn", onclick: () => setUiScale(getUiScale() - 0.06) }, "–"),
+            el("input", {
+              type: "range", min: "1.0", max: "1.65", step: "0.02",
+              value: String(getUiScale()), style: "flex:1;",
+              oninput: (ev) => setUiScale(parseFloat(ev.target.value))
+            }),
+            el("button", { class: "neo34Btn", onclick: () => setUiScale(getUiScale() + 0.06) }, "+"),
+          )
+        )
+      ),
+
+      section("UI"),
+      toggle("restyleTopUI", "New style top bar", "Same vibe as the new UI"),
+      toggle("hideVanillaElementUI", "Hide vanilla element rows", "Use the drawer instead"),
+      toggle("openElementsOnStart", "Open elements on start", "Opens the drawer after refresh"),
+      toggle("autoCloseOnPick", "Auto-close on pick", "Closes drawer after selecting"),
+      toggle("infoBar", "Info bar", "Small status pill that never blocks clicks"),
+
+      section("Panic"),
+      el("button", { class: "neo34Btn", onclick: () => panicReset() }, "Reset UI layout (panic)")
+    );
+
+    // Mods Library section (disable without deleting)
+    if (s.modsInOverhaul) {
+      syncModLibFromEnabled();
+
+      body.append(section("Mods Library (disable without deleting)"));
+
+      const wrap = el("div", { id: "neo34ModsWrap" },
+        el("div", { class: "neo34Small", style: "margin-bottom:10px;" },
+          "Toggle enabled mods here. Reload applies changes (unload needs refresh)."
+        ),
+        el("div", { id: "neo34ModsTop" },
+          el("input", { id: "neo34ModsAdd", placeholder: "Add mods… (use ; for multiple)", type: "text" }),
+          el("button", { class: "neo34Btn", onclick: () => modsAdd(false) }, "Add"),
+          el("button", { class: "neo34Btn", onclick: () => modsAdd(true) }, "Add+Reload"),
+          el("button", { class: "neo34Btn", onclick: () => location.reload() }, "Reload"),
+        ),
+        el("div", { style: "display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;" },
+          el("input", { id: "neo34ModsFind", placeholder: "Search saved mods…", type: "text" }),
+          el("button", { class: "neo34Btn", onclick: () => modsEnableAll(true) }, "Enable all"),
+          el("button", { class: "neo34Btn", onclick: () => modsEnableAll(false) }, "Disable all"),
+          el("button", { class: "neo34Btn", onclick: () => modsRemoveDisabled() }, "Remove disabled"),
+          el("button", { class: "neo34Btn", onclick: () => copyText(JSON.stringify(readModLib())) }, "Export"),
+          el("button", { class: "neo34Btn", onclick: () => modsImport() }, "Import"),
+        ),
+        el("div", { id: "neo34ModsList" })
+      );
+
+      body.append(wrap);
+
+      $("#neo34ModsFind").addEventListener("input", () => renderModsLibList());
+      renderModsLibList();
+    }
+  }
+
+  function modsAdd(reload) {
+    const input = $("#neo34ModsAdd");
+    if (!input) return;
+    const incoming = normalizeMods(input.value).filter(looksLikeModString);
+    if (!incoming.length) return toast("No mods to add");
+
+    const lib = readModLib();
+    const map = new Map(lib.map(x => [x.id, x]));
+    for (const id of incoming) {
+      const ex = map.get(id);
+      if (ex) ex.enabled = true;
+      else map.set(id, { id, enabled: true, addedAt: Date.now() });
+    }
+    // preserve order then append new
     const out = [];
     const seen = new Set();
-    for (const prof of p || []) {
-      const name = String(prof?.name || "").trim();
-      if (!name || seen.has(name)) continue;
-      seen.add(name);
-      out.push({ name, mods: (prof.mods || []).map(m => ({ id: String(m.id||"").trim(), enabled: !!m.enabled })).filter(m => m.id) });
-    }
-    localStorage.setItem(STORAGE.profiles, JSON.stringify(out));
-    return out;
+    for (const x of lib) { out.push(map.get(x.id) || x); seen.add(x.id); }
+    for (const id of incoming) if (!seen.has(id)) out.push(map.get(id));
+
+    writeModLib(out);
+    applyModLibToEnabled();
+    toast(reload ? "Added (reloading…)" : "Added (reload to apply)");
+    input.value = incoming.join("; ");
+    renderModsLibList();
+    if (reload) location.reload();
   }
 
-  function getActiveProfileName() {
-    return (localStorage.getItem(STORAGE.activeProfile) || "").trim();
+  function modsEnableAll(on) {
+    const lib = readModLib().map(x => ({ ...x, enabled: !!on }));
+    writeModLib(lib);
+    applyModLibToEnabled();
+    toast(on ? "Enabled all (reload to apply)" : "Disabled all (reload to apply)");
+    renderModsLibList();
   }
 
-  function setActiveProfileName(name) {
-    localStorage.setItem(STORAGE.activeProfile, String(name || "").trim());
+  function modsRemoveDisabled() {
+    const lib = readModLib().filter(x => x.enabled);
+    writeModLib(lib);
+    applyModLibToEnabled();
+    toast("Removed disabled (reload to apply)");
+    renderModsLibList();
   }
 
-  function saveCurrentAsProfile(name) {
-    const lib = readLibrary().map(x => ({ id: x.id, enabled: x.enabled }));
-    const profiles = readProfiles().filter(p => p.name !== name);
-    profiles.unshift({ name, mods: lib });
-    writeProfiles(profiles);
-    setActiveProfileName(name);
-  }
-
-  function loadProfile(name) {
-    const prof = readProfiles().find(p => p.name === name);
-    if (!prof) return false;
-    // apply to library (keep notes/addedAt if possible)
-    const old = readLibrary();
-    const oldMap = new Map(old.map(x => [x.id, x]));
-    const merged = [];
-    for (const m of prof.mods) {
-      const prev = oldMap.get(m.id);
-      merged.push({
-        id: m.id,
-        enabled: !!m.enabled,
-        addedAt: prev?.addedAt || Date.now(),
-        note: prev?.note || ""
-      });
-    }
-    writeLibrary(merged);
-    applyLibraryToEnabled();
-    setActiveProfileName(name);
-    return true;
-  }
-
-  // ---------------------------
-  // Toasts (tiny notifications)
-  // ---------------------------
-  function toast(msg, ms = 1600) {
-    const wrap = qs("#uiplus_toasts") || (() => {
-      const d = document.createElement("div");
-      d.id = "uiplus_toasts";
-      d.style.cssText = `
-        position:fixed;right:18px;bottom:18px;z-index:999999;
-        display:flex;flex-direction:column;gap:10px;
-        pointer-events:none;
-      `;
-      document.body.appendChild(d);
-      return d;
-    })();
-
-    const t = document.createElement("div");
-    t.textContent = msg;
-    t.style.cssText = `
-      pointer-events:none;
-      max-width:min(520px,85vw);
-      background:rgba(18,18,22,.92);
-      border:1px solid rgba(255,255,255,.14);
-      color:rgba(255,255,255,.92);
-      padding:10px 12px;
-      border-radius:14px;
-      box-shadow:0 16px 40px rgba(0,0,0,.45);
-      font: 600 13px/1.25 system-ui, -apple-system, Segoe UI, Roboto, Arial;
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      transform: translateY(6px);
-      opacity:0;
-      transition: transform .18s ease, opacity .18s ease;
-    `;
-    wrap.appendChild(t);
-    requestAnimationFrame(() => {
-      t.style.opacity = "1";
-      t.style.transform = "translateY(0)";
-    });
-    setTimeout(() => {
-      t.style.opacity = "0";
-      t.style.transform = "translateY(6px)";
-      setTimeout(() => t.remove(), 240);
-    }, ms);
-  }
-
-  // ---------------------------
-  // CSS for overlay + hud
-  // ---------------------------
-  function injectCSS() {
-    if (qs("#uiplus_ultra_v2_css")) return;
-
-    const st = document.createElement("style");
-    st.id = "uiplus_ultra_v2_css";
-    st.textContent = `
-:root{
-  --uip-z: 999940;
-  --uip-line: rgba(255,255,255,.14);
-  --uip-bg: rgba(12,12,16,.92);
-  --uip-bg2: rgba(20,20,26,.86);
-  --uip-txt: rgba(255,255,255,.92);
-  --uip-txt2: rgba(255,255,255,.66);
-  --uip-radius: 18px;
-  --uip-shadow: 0 22px 70px rgba(0,0,0,.60);
-  --uip-scale: 1;
-}
-
-#uiplus_overlay{
-  position:fixed; inset:0;
-  z-index: var(--uip-z);
-  display:none;
-  background: rgba(0,0,0,.55);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  color: var(--uip-txt);
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-}
-#uiplus_overlay.open{ display:block; }
-
-#uiplus_panel{
-  width: min(1280px, 96vw);
-  height: min(88vh, 980px);
-  margin: 6vh auto 0 auto;
-  background: linear-gradient(180deg, rgba(18,18,24,.94), rgba(8,8,10,.88));
-  border: 1px solid var(--uip-line);
-  border-radius: var(--uip-radius);
-  box-shadow: var(--uip-shadow);
-  overflow:hidden;
-  display:grid;
-  grid-template-columns: minmax(280px, 380px) 1fr;
-  font-size: calc(14px * var(--uip-scale));
-}
-
-#uiplus_left{
-  background: rgba(14,14,18,.84);
-  border-right: 1px solid var(--uip-line);
-  display:flex; flex-direction:column;
-  min-width:0;
-}
-#uiplus_right{
-  background: rgba(18,18,22,.76);
-  display:flex; flex-direction:column;
-  min-width:0;
-}
-
-.uip_top{
-  display:flex; align-items:center; gap:12px;
-  padding: 14px;
-  border-bottom: 1px solid var(--uip-line);
-  background: rgba(10,10,12,.55);
-}
-.uip_title{ display:flex; flex-direction:column; gap:2px; min-width:0; }
-.uip_title b{
-  font-size: calc(16px * var(--uip-scale));
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-}
-.uip_title span{
-  color: var(--uip-txt2);
-  font-size: calc(12px * var(--uip-scale));
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-}
-
-.uip_row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; min-width:0; }
-.uip_grow{ flex:1; min-width:0; }
-
-.uip_btn{
-  border:1px solid var(--uip-line);
-  background: rgba(255,255,255,.06);
-  color: var(--uip-txt);
-  padding: 10px 12px;
-  border-radius: 12px;
-  cursor:pointer;
-  user-select:none;
-  font-size: calc(13px * var(--uip-scale));
-  line-height: 1;
-}
-.uip_btn:hover{ background: rgba(255,255,255,.10); }
-.uip_btn:active{ transform: translateY(1px); }
-.uip_btn.primary{ border-color: rgba(120,170,255,.45); background: rgba(120,170,255,.18); }
-.uip_btn.danger{ border-color: rgba(255,90,90,.35); background: rgba(255,90,90,.16); }
-.uip_btn.ghost{ background: transparent; }
-
-.uip_input, .uip_textarea, .uip_select{
-  width:100%;
-  border:1px solid var(--uip-line);
-  background: rgba(0,0,0,.22);
-  color: var(--uip-txt);
-  padding: 10px 12px;
-  border-radius: 12px;
-  outline:none;
-  font-size: calc(13px * var(--uip-scale));
-}
-.uip_textarea{ resize: vertical; min-height: 140px; }
-.uip_input::placeholder, .uip_textarea::placeholder{ color: rgba(255,255,255,.45); }
-
-.uip_tabs{
-  display:flex; gap:8px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--uip-line);
-}
-.uip_tab{
-  padding: 10px 12px;
-  border-radius: 12px;
-  border:1px solid var(--uip-line);
-  background: rgba(255,255,255,.06);
-  cursor:pointer;
-  font-size: calc(13px * var(--uip-scale));
-}
-.uip_tab.active{
-  border-color: rgba(120,170,255,.45);
-  background: rgba(120,170,255,.18);
-}
-
-.uip_scroll{
-  flex:1; min-height:0;
-  overflow:auto;
-  padding: 14px;
-  overscroll-behavior: contain;
-}
-
-.uip_card{
-  border:1px solid var(--uip-line);
-  background: rgba(255,255,255,.05);
-  border-radius: var(--uip-radius);
-  padding: 12px;
-  margin-bottom: 10px;
-}
-.uip_card h3{ margin:0 0 6px 0; font-size: calc(14px * var(--uip-scale)); }
-.uip_card p{ margin:0; color: var(--uip-txt2); font-size: calc(12px * var(--uip-scale)); }
-
-.uip_item{
-  display:flex; align-items:center; gap:10px;
-  padding: 10px;
-  border:1px solid var(--uip-line);
-  background: rgba(0,0,0,.18);
-  border-radius: 14px;
-  margin-bottom: 10px;
-}
-.uip_item .name{ min-width:0; display:flex; flex-direction:column; gap:2px; }
-.uip_item .name b{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size: calc(13px * var(--uip-scale)); }
-.uip_item .name span{ color: var(--uip-txt2); font-size: calc(12px * var(--uip-scale)); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-
-.uip_toggle{
-  display:flex; align-items:center; gap:8px;
-  border:1px solid var(--uip-line);
-  background: rgba(255,255,255,.06);
-  border-radius: 999px;
-  padding: 8px 10px;
-}
-.uip_toggle input{ transform: scale(1.05); }
-
-.uip_footer{
-  padding: 14px;
-  border-top: 1px solid var(--uip-line);
-  background: rgba(10,10,12,.45);
-  display:flex; gap: 12px; align-items:center;
-}
-
-#uiplus_hud{
-  position:fixed;
-  z-index: 999930;
-  left: 18px; top: 74px;
-  padding: 10px 12px;
-  border-radius: 14px;
-  border:1px solid rgba(255,255,255,.14);
-  background: rgba(14,14,18,.72);
-  color: rgba(255,255,255,.92);
-  font: 700 12px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial;
-  box-shadow: 0 14px 40px rgba(0,0,0,.40);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  user-select:none;
-}
-#uiplus_hud .sub{
-  margin-top:6px;
-  color: rgba(255,255,255,.68);
-  font-weight: 600;
-  font-size: 11px;
-}
-#uiplus_hud.compact{ padding: 8px 10px; border-radius: 12px; }
-#uiplus_hud small{ font-weight:600; color: rgba(255,255,255,.70); }
-#uiplus_hud .drag{
-  display:flex; align-items:center; gap:10px;
-}
-#uiplus_hud .dot{
-  width:8px; height:8px; border-radius:999px;
-  background: rgba(120,170,255,.85);
-  box-shadow: 0 0 0 4px rgba(120,170,255,.18);
-}
-#uiplus_hud .btns{
-  display:flex; gap:8px; margin-left:auto;
-}
-#uiplus_hud button{
-  pointer-events:auto;
-  border:1px solid rgba(255,255,255,.16);
-  background: rgba(255,255,255,.06);
-  color: rgba(255,255,255,.92);
-  padding: 6px 8px;
-  border-radius: 10px;
-  cursor:pointer;
-  font: 800 11px/1 system-ui, -apple-system, Segoe UI, Roboto, Arial;
-}
-#uiplus_hud button:hover{ background: rgba(255,255,255,.10); }
-    `;
-    document.head.appendChild(st);
-  }
-
-  function applyOverlayScale() {
-    state.overlayScale = clamp(state.overlayScale, 0.85, 1.35);
-    document.documentElement.style.setProperty("--uip-scale", String(state.overlayScale));
-    saveScale();
-  }
-
-  // ---------------------------
-  // HUD (non-overlapping, draggable)
-  // ---------------------------
-  function createHUD() {
-    if (qs("#uiplus_hud")) return;
-
-    const hud = document.createElement("div");
-    hud.id = "uiplus_hud";
-    hud.style.left = `${Number(state.hud.x || 18)}px`;
-    hud.style.top = `${Number(state.hud.y || 74)}px`;
-    if (state.hud.compact) hud.classList.add("compact");
-    if (!state.hud.enabled) hud.style.display = "none";
-
-    hud.innerHTML = `
-      <div class="drag">
-        <span class="dot"></span>
-        <div>
-          <div><span id="uiplus_hud_title">UI+ Ready</span> <small id="uiplus_hud_ver">v2.0</small></div>
-          <div class="sub" id="uiplus_hud_sub">Mods: <span id="uiplus_hud_mods">?</span> • Key: Ctrl+Shift+U</div>
-        </div>
-        <div class="btns">
-          <button id="uiplus_hud_toggle">Hide</button>
-          <button id="uiplus_hud_open">Open</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(hud);
-
-    // update mods count sometimes
-    const update = () => {
-      try {
-        const enabled = readEnabledMods().length;
-        const lib = readLibrary().length;
-        qs("#uiplus_hud_mods").textContent = `${enabled}/${lib}`;
-      } catch {}
-    };
-    update();
-    setInterval(update, 1400);
-
-    // buttons
-    on(qs("#uiplus_hud_open"), "click", () => openOverlay("mods"));
-    on(qs("#uiplus_hud_toggle"), "click", () => {
-      state.hud.enabled = false;
-      saveHUD();
-      hud.style.display = "none";
-      toast("HUD hidden (re-enable in UI+ → Preferences)");
-    });
-
-    // drag
-    let dragging = false, ox = 0, oy = 0;
-    const dragHandle = qs("#uiplus_hud .drag");
-    on(dragHandle, "mousedown", (e) => {
-      if (e.target && e.target.tagName === "BUTTON") return;
-      dragging = true;
-      ox = e.clientX - hud.offsetLeft;
-      oy = e.clientY - hud.offsetTop;
-      e.preventDefault();
-    });
-    on(document, "mousemove", (e) => {
-      if (!dragging) return;
-      const x = clamp(e.clientX - ox, 6, window.innerWidth - hud.offsetWidth - 6);
-      const y = clamp(e.clientY - oy, 6, window.innerHeight - hud.offsetHeight - 6);
-      hud.style.left = `${x}px`;
-      hud.style.top = `${y}px`;
-    });
-    on(document, "mouseup", () => {
-      if (!dragging) return;
-      dragging = false;
-      state.hud.x = hud.offsetLeft;
-      state.hud.y = hud.offsetTop;
-      saveHUD();
-    });
-  }
-
-  // ---------------------------
-  // Overlay UI
-  // ---------------------------
-  function createOverlay() {
-    if (qs("#uiplus_overlay")) return;
-
-    const overlay = document.createElement("div");
-    overlay.id = "uiplus_overlay";
-    overlay.innerHTML = `
-      <div id="uiplus_panel" role="dialog" aria-modal="true" aria-label="UI+ Ultra">
-        <div id="uiplus_left">
-          <div class="uip_top">
-            <div class="uip_title uip_grow">
-              <b>UI+ Ultra</b>
-              <span>Mod Center • Profiles • QoL</span>
-            </div>
-            <button class="uip_btn ghost" id="uiplus_close" title="Close (Esc)">✕</button>
-          </div>
-
-          <div class="uip_tabs" id="uiplus_tabs">
-            <div class="uip_tab active" data-tab="mods">Mods</div>
-            <div class="uip_tab" data-tab="profiles">Profiles</div>
-            <div class="uip_tab" data-tab="prefs">Preferences</div>
-          </div>
-
-          <div class="uip_scroll" id="uiplus_left_scroll"></div>
-        </div>
-
-        <div id="uiplus_right">
-          <div class="uip_top">
-            <div class="uip_title uip_grow">
-              <b id="uiplus_r_title">Mods</b>
-              <span id="uiplus_r_sub">Enable/disable without removing</span>
-            </div>
-            <button class="uip_btn" id="uiplus_help">Hotkeys</button>
-          </div>
-
-          <div class="uip_scroll" id="uiplus_right_scroll"></div>
-
-          <div class="uip_footer">
-            <span style="color:rgba(255,255,255,.65); font-size:12px;" id="uiplus_footer"></span>
-            <div class="uip_grow"></div>
-            <button class="uip_btn" id="uiplus_close2">Close</button>
-          </div>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-
-    on(qs("#uiplus_close"), "click", closeOverlay);
-    on(qs("#uiplus_close2"), "click", closeOverlay);
-
-    on(overlay, "click", (e) => {
-      if (e.target === overlay) closeOverlay();
-    });
-
-    on(qs("#uiplus_tabs"), "click", (e) => {
-      const tab = e.target?.dataset?.tab;
-      if (!tab) return;
-      setTab(tab);
-    });
-
-    on(qs("#uiplus_help"), "click", () => {
-      alert(
-        "UI+ Hotkeys:\n" +
-        "- Ctrl+Shift+U (Cmd+Shift+U on Mac): Open UI+\n" +
-        "- Esc: Close UI+\n\n" +
-        "Notes:\n" +
-        "- Disabling mods keeps them saved.\n" +
-        "- Reload is required to fully unload mods."
-      );
-    });
-
-    on(document, "keydown", (e) => {
-      if (!state.overlayOpen) return;
-      if (e.key === "Escape") {
-        e.preventDefault();
-        closeOverlay();
-      }
-    }, { passive: false });
-
-    on(document, "keydown", (e) => {
-      const isMac = navigator.platform.toLowerCase().includes("mac");
-      const cmdOrCtrl = isMac ? e.metaKey : e.ctrlKey;
-      if (cmdOrCtrl && e.shiftKey && e.key.toLowerCase() === "u") {
-        e.preventDefault();
-        openOverlay(state.tab || "mods");
-      }
-    }, { passive: false });
-  }
-
-  function setTab(tab) {
-    state.tab = tab;
-    qsa(".uip_tab").forEach(t => t.classList.toggle("active", t.dataset.tab === tab));
-    render();
-  }
-
-  function openOverlay(tab = "mods") {
-    syncLibraryFromEnabled();
-    state.overlayOpen = true;
-    setTab(tab);
-    qs("#uiplus_overlay").classList.add("open");
-    qs("#uiplus_footer").textContent = "Tip: Disable keeps it saved • Reload applies changes";
-  }
-
-  function closeOverlay() {
-    state.overlayOpen = false;
-    qs("#uiplus_overlay").classList.remove("open");
-  }
-
-  // ---------------------------
-  // Render tabs
-  // ---------------------------
-  function render() {
-    const L = qs("#uiplus_left_scroll");
-    const R = qs("#uiplus_right_scroll");
-    if (!L || !R) return;
-
-    applyOverlayScale();
-
-    if (state.tab === "mods") renderMods(L, R);
-    if (state.tab === "profiles") renderProfiles(L, R);
-    if (state.tab === "prefs") renderPrefs(L, R);
-  }
-
-  function renderMods(L, R) {
-    qs("#uiplus_r_title").textContent = "Mod Center";
-    qs("#uiplus_r_sub").textContent = "Enable/disable without removing";
-
-    // Left side: controls
-    L.innerHTML = `
-      <div class="uip_card">
-        <h3>Search</h3>
-        <input class="uip_input" id="uiplus_mod_search" placeholder="Search mods..." value="${escapeHtml(state.modSearch)}" />
-      </div>
-
-      <div class="uip_card">
-        <h3>Sort</h3>
-        <select class="uip_select" id="uiplus_mod_sort">
-          <option value="enabledFirst">Enabled first</option>
-          <option value="az">A → Z</option>
-          <option value="recent">Recently added</option>
-        </select>
-      </div>
-
-      <div class="uip_card">
-        <h3>Add Mods</h3>
-        <textarea class="uip_textarea" id="uiplus_mod_add" placeholder="example.js; https://.../mod.js"></textarea>
-        <div class="uip_row" style="margin-top:10px;">
-          <button class="uip_btn primary" id="uiplus_add_btn">Add</button>
-          <button class="uip_btn primary" id="uiplus_add_reload">Add + Reload</button>
-          <button class="uip_btn" id="uiplus_add_clear">Clear</button>
-        </div>
-        <p style="margin-top:8px;">Use <b>;</b> for multiple. Reload applies changes.</p>
-      </div>
-
-      <div class="uip_card">
-        <h3>Quick</h3>
-        <div class="uip_row">
-          <button class="uip_btn" id="uiplus_enable_all">Enable all</button>
-          <button class="uip_btn" id="uiplus_disable_all">Disable all</button>
-          <button class="uip_btn danger" id="uiplus_remove_disabled">Remove disabled</button>
-          <button class="uip_btn primary" id="uiplus_reload">Reload</button>
-        </div>
-      </div>
-    `;
-
-    // Wire left controls
-    const search = qs("#uiplus_mod_search");
-    const sort = qs("#uiplus_mod_sort");
-    sort.value = state.modSort;
-
-    on(search, "input", () => { state.modSearch = search.value || ""; render(); });
-    on(sort, "change", () => { state.modSort = sort.value || "enabledFirst"; render(); });
-
-    on(qs("#uiplus_reload"), "click", () => location.reload());
-
-    on(qs("#uiplus_enable_all"), "click", () => {
-      const lib = readLibrary().map(x => ({ ...x, enabled: true }));
-      writeLibrary(lib);
-      applyLibraryToEnabled();
-      toast("Enabled all (reload to apply)");
-      render();
-    });
-
-    on(qs("#uiplus_disable_all"), "click", () => {
-      const lib = readLibrary().map(x => ({ ...x, enabled: false }));
-      writeLibrary(lib);
-      applyLibraryToEnabled();
-      toast("Disabled all (reload to apply)");
-      render();
-    });
-
-    on(qs("#uiplus_remove_disabled"), "click", () => {
-      const lib = readLibrary().filter(x => x.enabled);
-      writeLibrary(lib);
-      applyLibraryToEnabled();
-      toast("Removed disabled from library");
-      render();
-    });
-
-    const addBox = qs("#uiplus_mod_add");
-    on(qs("#uiplus_add_clear"), "click", () => addBox.value = "");
-
-    function doAdd(reload) {
-      const incoming = normalizeMods(addBox.value).filter(looksLikeModString);
-      if (!incoming.length) return toast("Nothing to add");
-      const old = readLibrary();
-      const map = new Map(old.map(x => [x.id, x]));
-      for (const id of incoming) {
-        const ex = map.get(id);
-        if (ex) ex.enabled = true;
-        else map.set(id, { id, enabled: true, addedAt: Date.now(), note: "" });
-      }
-      // keep order
-      const out = [];
-      const seen = new Set();
-      for (const x of old) { out.push(map.get(x.id) || x); seen.add(x.id); }
-      for (const id of incoming) if (!seen.has(id)) out.push(map.get(id));
-      writeLibrary(out);
-      applyLibraryToEnabled();
-      toast(reload ? "Added (reloading...)" : "Added (reload to apply)");
-      if (reload) location.reload();
-      else render();
-    }
-
-    on(qs("#uiplus_add_btn"), "click", () => doAdd(false));
-    on(qs("#uiplus_add_reload"), "click", () => doAdd(true));
-
-    // Right side: list
-    const lib = readLibrary();
-    const q = (state.modSearch || "").trim().toLowerCase();
-
-    let items = q ? lib.filter(x => x.id.toLowerCase().includes(q)) : lib.slice();
-
-    if (state.modSort === "enabledFirst") {
-      items.sort((a, b) => Number(b.enabled) - Number(a.enabled) || a.id.localeCompare(b.id));
-    } else if (state.modSort === "az") {
-      items.sort((a, b) => a.id.localeCompare(b.id));
-    } else if (state.modSort === "recent") {
-      items.sort((a, b) => Number(b.addedAt) - Number(a.addedAt));
-    }
-
-    const enabledCount = lib.filter(x => x.enabled).length;
-    qs("#uiplus_footer").textContent = `Enabled: ${enabledCount}/${lib.length} • Reload applies changes`;
-
-    if (!items.length) {
-      R.innerHTML = `
-        <div class="uip_card">
-          <h3>No mods found</h3>
-          <p>${lib.length ? "Try another search." : "Add a mod on the left to get started."}</p>
-        </div>
-      `;
-      return;
-    }
-
-    R.innerHTML = "";
-    for (const it of items) {
-      const row = document.createElement("div");
-      row.className = "uip_item";
-      row.innerHTML = `
-        <div class="uip_grow name">
-          <b title="${escapeHtml(it.id)}">${escapeHtml(it.id)}</b>
-          <span>${it.id.startsWith("http") ? "URL mod" : "File mod"} • ${new Date(it.addedAt).toLocaleString()}</span>
-        </div>
-
-        <label class="uip_toggle" title="Disable keeps it saved (reload to apply)">
-          <input type="checkbox" ${it.enabled ? "checked" : ""} data-act="toggle" data-id="${escapeAttr(it.id)}" />
-          <span style="color:rgba(255,255,255,.85); font-size:12px;">Enabled</span>
-        </label>
-
-        <button class="uip_btn" data-act="copy" data-id="${escapeAttr(it.id)}">Copy</button>
-        <button class="uip_btn danger" data-act="remove" data-id="${escapeAttr(it.id)}">Remove</button>
-      `;
-      R.appendChild(row);
-    }
-
-    // row actions
-    qsa("[data-act]", R).forEach(el => {
-      const act = el.dataset.act;
-      const id = el.dataset.id || "";
-      if (!id) return;
-
-      if (act === "copy") {
-        on(el, "click", async () => {
-          try { await navigator.clipboard.writeText(id); toast("Copied"); }
-          catch { prompt("Copy:", id); }
-        });
-      }
-      if (act === "remove") {
-        on(el, "click", () => {
-          const out = readLibrary().filter(x => x.id !== id);
-          writeLibrary(out);
-          applyLibraryToEnabled();
-          toast("Removed (reload to apply)");
-          render();
-        });
-      }
-    });
-
-    qsa('input[data-act="toggle"]', R).forEach(chk => {
-      on(chk, "change", () => {
-        const id = chk.dataset.id;
-        const out = readLibrary().map(x => x.id === id ? { ...x, enabled: chk.checked } : x);
-        writeLibrary(out);
-        applyLibraryToEnabled();
-        qs("#uiplus_footer").textContent = "Changed. Reload to apply.";
-      });
-    });
-  }
-
-  function renderProfiles(L, R) {
-    qs("#uiplus_r_title").textContent = "Profiles";
-    qs("#uiplus_r_sub").textContent = "Save mod sets and switch fast";
-
-    const profiles = readProfiles();
-    const active = getActiveProfileName();
-
-    L.innerHTML = `
-      <div class="uip_card">
-        <h3>Active</h3>
-        <p>Current: <b style="color:rgba(255,255,255,.92)">${escapeHtml(active || "None")}</b></p>
-      </div>
-
-      <div class="uip_card">
-        <h3>Save current as</h3>
-        <input class="uip_input" id="uiplus_profile_name" placeholder="Profile name..." />
-        <div class="uip_row" style="margin-top:10px;">
-          <button class="uip_btn primary" id="uiplus_profile_save">Save</button>
-        </div>
-        <p style="margin-top:8px;">Saves your current library+enabled states.</p>
-      </div>
-
-      <div class="uip_card">
-        <h3>Export / Import</h3>
-        <div class="uip_row">
-          <button class="uip_btn" id="uiplus_profiles_export">Copy export</button>
-          <button class="uip_btn" id="uiplus_profiles_import">Import from clipboard</button>
-        </div>
-      </div>
-    `;
-
-    on(qs("#uiplus_profile_save"), "click", () => {
-      const name = (qs("#uiplus_profile_name").value || "").trim();
-      if (!name) return toast("Name required");
-      saveCurrentAsProfile(name);
-      toast(`Saved profile: ${name}`);
-      render();
-    });
-
-    on(qs("#uiplus_profiles_export"), "click", async () => {
-      try { await navigator.clipboard.writeText(JSON.stringify(readProfiles())); toast("Profiles copied"); }
-      catch { prompt("Copy profiles JSON:", JSON.stringify(readProfiles())); }
-    });
-
-    on(qs("#uiplus_profiles_import"), "click", async () => {
-      try {
-        const txt = await navigator.clipboard.readText();
-        const v = safeParse(txt);
-        if (!Array.isArray(v)) return toast("Clipboard is not valid JSON array");
-        writeProfiles(v);
-        toast("Imported profiles");
-        render();
-      } catch {
-        toast("Clipboard read blocked");
-      }
-    });
-
-    if (!profiles.length) {
-      R.innerHTML = `
-        <div class="uip_card">
-          <h3>No profiles yet</h3>
-          <p>Create one on the left (“Save current as”).</p>
-        </div>
-      `;
-      return;
-    }
-
-    R.innerHTML = `
-      <div class="uip_card">
-        <h3>Profile List</h3>
-        <p>Load switches enabled mods (reload to apply).</p>
-      </div>
-    `;
-
-    for (const p of profiles) {
-      const row = document.createElement("div");
-      row.className = "uip_item";
-      const enabled = p.mods.filter(m => m.enabled).length;
-      row.innerHTML = `
-        <div class="uip_grow name">
-          <b>${escapeHtml(p.name)}</b>
-          <span>${enabled}/${p.mods.length} enabled</span>
-        </div>
-        <button class="uip_btn primary" data-act="load" data-name="${escapeAttr(p.name)}">Load</button>
-        <button class="uip_btn" data-act="setactive" data-name="${escapeAttr(p.name)}">Set Active</button>
-        <button class="uip_btn danger" data-act="del" data-name="${escapeAttr(p.name)}">Delete</button>
-      `;
-      R.appendChild(row);
-    }
-
-    qsa("[data-act]", R).forEach(btn => {
-      const act = btn.dataset.act;
-      const name = btn.dataset.name;
-      if (!name) return;
-
-      if (act === "load") {
-        on(btn, "click", () => {
-          const ok = loadProfile(name);
-          if (!ok) return toast("Profile not found");
-          toast(`Loaded: ${name} (reload to apply)`);
-          render();
-        });
-      }
-      if (act === "setactive") {
-        on(btn, "click", () => {
-          setActiveProfileName(name);
-          toast(`Active: ${name}`);
-          render();
-        });
-      }
-      if (act === "del") {
-        on(btn, "click", () => {
-          const out = readProfiles().filter(p => p.name !== name);
-          writeProfiles(out);
-          if (getActiveProfileName() === name) setActiveProfileName("");
-          toast("Deleted profile");
-          render();
-        });
-      }
-    });
-  }
-
-  function renderPrefs(L, R) {
-    qs("#uiplus_r_title").textContent = "Preferences";
-    qs("#uiplus_r_sub").textContent = "UI size, HUD, safety toggles";
-
-    const enabled = !!state.hud.enabled;
-    const compact = !!state.hud.compact;
-    const hijack = !!state.prefs.hijackModsButton;
-
-    L.innerHTML = `
-      <div class="uip_card">
-        <h3>Overlay Size</h3>
-        <div class="uip_row">
-          <button class="uip_btn" id="uiplus_scale_down">A−</button>
-          <button class="uip_btn" id="uiplus_scale_up">A+</button>
-          <div class="uip_grow"></div>
-          <button class="uip_btn primary" id="uiplus_reload_now">Reload</button>
-        </div>
-        <p style="margin-top:8px;">Scale affects UI+ overlay only.</p>
-      </div>
-
-      <div class="uip_card">
-        <h3>HUD</h3>
-        <div class="uip_row">
-          <button class="uip_btn" id="uiplus_hud_on">${enabled ? "Disable HUD" : "Enable HUD"}</button>
-          <button class="uip_btn" id="uiplus_hud_compact">${compact ? "Normal HUD" : "Compact HUD"}</button>
-        </div>
-        <p style="margin-top:8px;">HUD never blocks clicks (small + draggable).</p>
-      </div>
-
-      <div class="uip_card">
-        <h3>Safety</h3>
-        <label class="uip_toggle" style="width:fit-content;">
-          <input type="checkbox" id="uiplus_hijack_mods" ${hijack ? "checked" : ""} />
-          <span style="color:rgba(255,255,255,.85); font-size:12px;">Hijack vanilla Mods button</span>
-        </label>
-        <p style="margin-top:8px;">OFF recommended (prevents black-screen bugs).</p>
-      </div>
-    `;
-
-    R.innerHTML = `
-      <div class="uip_card">
-        <h3>Why your mod “stopped loading”</h3>
-        <p>
-          If your URL ends with <b>ui+.js</b>, many parsers treat <b>+</b> like a space.
-          Then the game fetches <b>ui .js</b> (404) and nothing runs.
-        </p>
-        <p style="margin-top:8px;">
-          Fix: use <b>ui%2B.js</b> in the URL, or rename the file to <b>ui_plus.js</b>.
-        </p>
-      </div>
-
-      <div class="uip_card">
-        <h3>Quick Tips</h3>
-        <p>• Disable mods without deleting them (toggle Enabled)</p>
-        <p>• Save profiles for “big mod set” vs “light set”</p>
-        <p>• Reload applies changes (unload needs refresh)</p>
-      </div>
-    `;
-
-    on(qs("#uiplus_scale_down"), "click", () => { state.overlayScale = clamp(state.overlayScale - 0.05, 0.85, 1.35); saveScale(); applyOverlayScale(); });
-    on(qs("#uiplus_scale_up"), "click", () => { state.overlayScale = clamp(state.overlayScale + 0.05, 0.85, 1.35); saveScale(); applyOverlayScale(); });
-
-    on(qs("#uiplus_reload_now"), "click", () => location.reload());
-
-    on(qs("#uiplus_hud_on"), "click", () => {
-      state.hud.enabled = !state.hud.enabled;
-      saveHUD();
-      const h = qs("#uiplus_hud");
-      if (h) h.style.display = state.hud.enabled ? "" : "none";
-      toast(state.hud.enabled ? "HUD enabled" : "HUD disabled");
-      render();
-    });
-
-    on(qs("#uiplus_hud_compact"), "click", () => {
-      state.hud.compact = !state.hud.compact;
-      saveHUD();
-      const h = qs("#uiplus_hud");
-      if (h) h.classList.toggle("compact", !!state.hud.compact);
-      toast(state.hud.compact ? "HUD compact" : "HUD normal");
-      render();
-    });
-
-    on(qs("#uiplus_hijack_mods"), "change", (e) => {
-      state.prefs.hijackModsButton = !!e.target.checked;
-      savePrefs();
-      toast(state.prefs.hijackModsButton ? "Will hijack Mods button" : "Will NOT hijack Mods button");
-    });
-  }
-
-  // ---------------------------
-  // Toolbar button injection (UI+)
-  // ---------------------------
-  function findToolbar() {
-    // Sandboxels usually has a top control bar; try common containers
-    const candidates = [
-      qs("#controls"), qs("#toolControls"), qs("#controlButtons"),
-      qs(".controls"), qs(".toolbar"), document.body
-    ].filter(Boolean);
-
-    // pick the first element that contains known button labels
-    for (const c of candidates) {
-      const txt = safeText(c);
-      if (txt.includes("Mods") && txt.includes("Settings")) return c;
-    }
-    // fallback
-    return qs("#controls") || qs("#toolControls") || document.body;
-  }
-
-  function injectToolbarButton() {
-    if (qs("#uiplus_toolbar_btn")) return;
-
-    const bar = findToolbar();
-    if (!bar) return;
-
-    // Find a reference button to place next to (Mods/Settings)
-    const buttons = qsa("button, .button, a", bar);
-    const modsBtn = buttons.find(b => safeText(b) === "Mods" || (b.title && b.title.toLowerCase().includes("mod")));
-    const settingsBtn = buttons.find(b => safeText(b) === "Settings" || (b.title && b.title.toLowerCase().includes("setting")));
-
-    const btn = document.createElement("button");
-    btn.id = "uiplus_toolbar_btn";
-    btn.type = "button";
-    btn.textContent = "UI+";
-    btn.style.cssText = `
-      margin-left: 6px;
-      border: 1px solid rgba(120,170,255,.55);
-      background: rgba(120,170,255,.18);
-      color: rgba(255,255,255,.92);
-      border-radius: 10px;
-      padding: 6px 10px;
-      font: 800 12px/1 system-ui, -apple-system, Segoe UI, Roboto, Arial;
-      cursor: pointer;
-    `;
-    btn.addEventListener("click", () => openOverlay("mods"));
-
-    // Insert near Mods if possible
-    if (modsBtn && modsBtn.parentNode) modsBtn.parentNode.insertBefore(btn, modsBtn.nextSibling);
-    else if (settingsBtn && settingsBtn.parentNode) settingsBtn.parentNode.insertBefore(btn, settingsBtn);
-    else bar.appendChild(btn);
-
-    log("Toolbar UI+ button added");
-  }
-
-  // Optional: hijack vanilla Mods button (OFF by default)
-  function maybeHijackModsButton() {
-    if (!state.prefs.hijackModsButton) return;
-
-    const bar = findToolbar();
-    if (!bar) return;
-
-    const buttons = qsa("button, .button, a", bar);
-    const modsBtn = buttons.find(b => safeText(b) === "Mods" || (b.title && b.title.toLowerCase().includes("mod")));
-    if (!modsBtn || modsBtn.__uiplus_hijacked) return;
-    modsBtn.__uiplus_hijacked = true;
-
-    modsBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
-      openOverlay("mods");
-    }, true);
-
-    log("Hijacked Mods button (Preferences)");
-  }
-
-  // ---------------------------
-  // Escapes
-  // ---------------------------
-  function escapeHtml(s) {
-    return String(s || "")
-      .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;").replaceAll("'", "&#039;");
-  }
-  function escapeAttr(s) {
-    return escapeHtml(s).replaceAll("\n", " ").replaceAll("\r", " ");
-  }
-
-  // ---------------------------
-  // Boot
-  // ---------------------------
-  function boot() {
+  async function modsImport() {
     try {
-      injectCSS();
-      applyOverlayScale();
-      syncLibraryFromEnabled();
-
-      createOverlay();
-      createHUD();
-
-      // Re-inject button because Sandboxels can rebuild toolbar
-      setInterval(() => {
-        injectToolbarButton();
-        maybeHijackModsButton();
-      }, 700);
-
-      // First run inject now too
-      injectToolbarButton();
-      maybeHijackModsButton();
-
-      toast("UI+ loaded (Ctrl+Shift+U)");
-      log("Loaded OK");
-    } catch (e) {
-      err("Boot failed:", e);
-      // If something goes wrong, do NOT break the game
-      try { toast("UI+ failed (check console)"); } catch {}
+      const txt = navigator.clipboard?.readText ? await navigator.clipboard.readText() : "";
+      const v = safeParse(txt, null);
+      if (!Array.isArray(v)) return toast("Clipboard is not mod JSON");
+      const lib = v
+        .filter(x => x && typeof x.id === "string")
+        .map(x => ({ id: x.id.trim(), enabled: !!x.enabled, addedAt: Number(x.addedAt || Date.now()) }))
+        .filter(x => x.id && looksLikeModString(x.id));
+      writeModLib(lib);
+      applyModLibToEnabled();
+      toast("Imported (reload to apply)");
+      renderModsLibList();
+    } catch {
+      toast("Clipboard blocked");
     }
   }
 
-  // Wait for DOM
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", boot, { once: true });
-  } else {
-    boot();
+  function renderModsLibList() {
+    const list = $("#neo34ModsList");
+    if (!list) return;
+
+    const q = ($("#neo34ModsFind")?.value || "").trim().toLowerCase();
+    const enabledSet = new Set(readEnabledMods());
+    let lib = readModLib();
+
+    if (q) lib = lib.filter(x => x.id.toLowerCase().includes(q));
+
+    // sort: enabled first then name
+    lib.sort((a, b) => Number(b.enabled) - Number(a.enabled) || a.id.localeCompare(b.id));
+
+    list.innerHTML = "";
+    const total = readModLib().length;
+    const enabled = readModLib().filter(x => x.enabled).length;
+
+    list.appendChild(
+      el("div", { class: "neo34Small", style: "margin-top:10px;" },
+        `Saved: ${total} • Enabled: ${enabled} • Key: ${guessEnabledModsKey()}`
+      )
+    );
+
+    for (const m of lib) {
+      const row = el("div", { class: "neo34ModsRow" });
+
+      const cb = el("input", {
+        type: "checkbox",
+        checked: m.enabled ? "checked" : null,
+        onchange: (ev) => {
+          const lib2 = readModLib().map(x => x.id === m.id ? { ...x, enabled: !!ev.target.checked } : x);
+          writeModLib(lib2);
+          applyModLibToEnabled();
+          toast("Changed (reload to apply)");
+          renderModsLibList();
+        }
+      });
+
+      const badge = enabledSet.has(m.id)
+        ? el("span", { class: "neo34Badge ok" }, "Enabled")
+        : el("span", { class: "neo34Badge warn" }, "Reload");
+
+      row.append(
+        cb,
+        el("b", {}, m.id),
+        badge,
+        el("button", { class: "neo34Btn", onclick: () => copyText(m.id) }, "Copy"),
+        el("button", {
+          class: "neo34Btn",
+          onclick: () => {
+            const lib2 = readModLib().filter(x => x.id !== m.id);
+            writeModLib(lib2);
+            applyModLibToEnabled();
+            toast("Removed (reload to apply)");
+            renderModsLibList();
+          }
+        }, "Remove")
+      );
+
+      list.appendChild(row);
+    }
   }
+
+  function focusModsSection() {
+    setOpenOverhaul(true);
+    // wait a tick for open animation then scroll
+    setTimeout(() => {
+      const wrap = $("#neo34ModsWrap");
+      if (wrap) wrap.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+  }
+
+  function liveApply() {
+    const s = loadSettings();
+    document.body.classList.toggle("neo-topstyle", !!s.restyleTopUI);
+    document.body.classList.toggle("neo-hide-vanilla", !!s.hideVanillaElementUI);
+
+    if (localStorage.getItem(MOD.keys.compact) == null) localStorage.setItem(MOD.keys.compact, s.compactView ? "1" : "0");
+    if (localStorage.getItem(MOD.keys.hideCats) == null) localStorage.setItem(MOD.keys.hideCats, s.hideCategories ? "1" : "0");
+    if (localStorage.getItem(MOD.keys.uiScale) == null) localStorage.setItem(MOD.keys.uiScale, String(s.uiScale));
+
+    document.body.style.setProperty("--neo-ui-scale", String(getUiScale()));
+    applyViewFlags();
+    buildOverhaulPanel();
+    safeUpdateTopOffset();
+    updateLayout();
+    renderCats();
+    renderElements();
+    enhanceModsUI();
+    renderInfoBar();
+  }
+
+  // ---------- Mods UI (safe injection into vanilla mod menu)
+  function findModRoot() {
+    return $("#modManager") || $("#modManagerScreen") || $("#modMenu") || $("#modMenuScreen");
+  }
+
+  function findModRows(root) {
+    if (!root) return [];
+    const checks = $$('input[type="checkbox"]', root);
+    const rows = new Set();
+    for (const cb of checks) {
+      const row = cb.closest("div, li, tr") || cb.parentElement;
+      if (row && row.textContent && row.textContent.trim()) rows.add(row);
+    }
+    return Array.from(rows).filter(x => x instanceof HTMLElement);
+  }
+
+  function enhanceModsUI() {
+    const root = findModRoot();
+    if (!root) return;
+    if ($("#neo34ModTools", root)) return;
+
+    const bar = el("div", { id: "neo34ModTools" },
+      el("input", { id: "neo34ModSearch", type: "text", placeholder: "Search mods…" }),
+      el("button", { class: "neo34MiniBtn", onclick: () => focusModsSection() }, "Open Neo Mods"),
+      el("button", { class: "neo34MiniBtn", onclick: () => setUiScale(getUiScale() + 0.06) }, "UI +"),
+      el("button", { class: "neo34MiniBtn", onclick: () => setUiScale(getUiScale() - 0.06) }, "UI −"),
+      el("button", {
+        class: "neo34MiniBtn",
+        onclick: () => { const i = $("#neo34ModSearch", root); i.value = ""; i.dispatchEvent(new Event("input")); }
+      }, "Clear"),
+    );
+
+    root.prepend(bar);
+
+    const input = $("#neo34ModSearch", root);
+    input.addEventListener("input", () => {
+      const q = input.value.trim().toLowerCase();
+      const rows = findModRows(root);
+      for (const r of rows) {
+        const t = (r.textContent || "").toLowerCase();
+        r.style.display = (!q || t.includes(q)) ? "" : "none";
+      }
+    });
+  }
+
+  function watchMods() {
+    setInterval(() => enhanceModsUI(), 900);
+  }
+
+  // ---------- PANIC RESET
+  function panicReset() {
+    localStorage.setItem(MOD.keys.uiScale, "1.30");
+    localStorage.setItem(MOD.keys.widthElements, "520");
+    localStorage.setItem(MOD.keys.widthOverhaul, "520");
+    localStorage.setItem(MOD.keys.maxElements, "0");
+    localStorage.setItem(MOD.keys.maxOverhaul, "0");
+    localStorage.setItem(MOD.keys.openElements, "1");
+    localStorage.setItem(MOD.keys.openOverhaul, "0");
+    localStorage.setItem(MOD.keys.hideCats, "0");
+    localStorage.setItem(MOD.keys.compact, "1");
+
+    document.body.style.setProperty("--neo-ui-scale", "1.30");
+    $("#neo34Elements")?.classList.add("open");
+    $("#neo34Overhaul")?.classList.remove("open");
+    $("#neo34Elements")?.classList.remove("max");
+    $("#neo34Overhaul")?.classList.remove("max");
+
+    applyViewFlags();
+    safeUpdateTopOffset();
+    updateLayout();
+    renderCats();
+    renderElements();
+    toast("UI reset");
+  }
+
+  // ---------- hotkeys
+  function installHotkeys() {
+    window.addEventListener("keydown", (ev) => {
+      if (!loadSettings().hotkeys) return;
+      const a = document.activeElement;
+      const typing = a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA");
+
+      if (!typing && ev.key.toLowerCase() === "b") { ev.preventDefault(); setOpenElements(!isOpenElements()); }
+      if (!typing && ev.key.toLowerCase() === "o") { ev.preventDefault(); setOpenOverhaul(!isOpenOverhaul()); }
+
+      if (!typing && ev.key === "/") {
+        ev.preventDefault();
+        setOpenElements(true);
+        $("#neo34Search")?.focus();
+        $("#neo34Search")?.select();
+      }
+
+      // Quick jump to mods section
+      if (!typing && ev.key.toLowerCase() === "m") {
+        ev.preventDefault();
+        focusModsSection();
+        $("#neo34ModsFind")?.focus();
+      }
+
+      // PANIC: Ctrl+0
+      if ((ev.ctrlKey || ev.metaKey) && ev.key === "0") {
+        ev.preventDefault();
+        panicReset();
+      }
+    }, { passive: false });
+  }
+
+  // ---------- boot
+  onGameReady(async () => {
+    cleanupOld();
+
+    try { await waitFor(() => $("#controls") && $("#toolControls")); } catch {}
+    try { await waitFor(() => window.elements && Object.keys(window.elements).length > 20); } catch {}
+
+    // defaults
+    if (localStorage.getItem(MOD.keys.uiScale) == null) localStorage.setItem(MOD.keys.uiScale, String(loadSettings().uiScale));
+    if (localStorage.getItem(MOD.keys.openElements) == null) localStorage.setItem(MOD.keys.openElements, loadSettings().openElementsOnStart ? "1" : "0");
+    if (localStorage.getItem(MOD.keys.openOverhaul) == null) localStorage.setItem(MOD.keys.openOverhaul, "0");
+    if (localStorage.getItem(MOD.keys.widthElements) == null) localStorage.setItem(MOD.keys.widthElements, "520");
+    if (localStorage.getItem(MOD.keys.widthOverhaul) == null) localStorage.setItem(MOD.keys.widthOverhaul, "520");
+    if (localStorage.getItem(MOD.keys.maxElements) == null) localStorage.setItem(MOD.keys.maxElements, "0");
+    if (localStorage.getItem(MOD.keys.maxOverhaul) == null) localStorage.setItem(MOD.keys.maxOverhaul, "0");
+    if (localStorage.getItem(MOD.keys.compact) == null) localStorage.setItem(MOD.keys.compact, loadSettings().compactView ? "1" : "0");
+    if (localStorage.getItem(MOD.keys.hideCats) == null) localStorage.setItem(MOD.keys.hideCats, loadSettings().hideCategories ? "1" : "0");
+
+    injectCss("neo34Style", cssNeo());
+
+    document.body.classList.add("sbx-neo34");
+    document.body.style.setProperty("--neo-ui-scale", String(getUiScale()));
+
+    ensureUI();
+    addTopButtons();
+
+    // sync mod lib once
+    syncModLibFromEnabled();
+
+    // apply settings
+    document.body.classList.toggle("neo-topstyle", !!loadSettings().restyleTopUI);
+    document.body.classList.toggle("neo-hide-vanilla", !!loadSettings().hideVanillaElementUI);
+    applyViewFlags();
+
+    // open state
+    $("#neo34Elements")?.classList.toggle("open", isOpenElements());
+    $("#neo34Overhaul")?.classList.toggle("open", isOpenOverhaul());
+    $("#neo34Elements")?.classList.toggle("max", isMax("elements"));
+    $("#neo34Overhaul")?.classList.toggle("max", isMax("overhaul"));
+
+    buildOverhaulPanel();
+    safeUpdateTopOffset();
+    updateLayout();
+
+    renderCats();
+    setTab(currentTab);
+    renderElements();
+
+    // keep stable even when UI changes
+    window.addEventListener("resize", () => { safeUpdateTopOffset(); updateLayout(); });
+    setInterval(() => { safeUpdateTopOffset(); updateLayout(); renderInfoBar(); }, 900);
+
+    installHotkeys();
+    watchMods();
+    enhanceModsUI();
+    renderInfoBar();
+
+    toast(`${MOD.name} v${MOD.version} loaded`);
+  });
+
 })();
