@@ -1,1042 +1,943 @@
-// sbx_neo_full_ui_overhaul_v3_3.js
-// FIXES:
-// - elements drawer height bug (safe top offset, clamped)
-// - clickable + scrollable element grid (min-heights)
-// - big UI without breaking #controls layout (NO display:flex override)
-// - mods menu restyle without forcing broken sizes
-// - Ctrl+0 panic reset
-
+// Neo Mod Center + Settings QoL + Info Bar (no overlap)
+// Drop-in mod file for Sandboxels
 (() => {
   "use strict";
 
-  const MOD = {
-    name: "Neo Full UI Overhaul",
-    version: "3.3.0",
-    keys: {
-      settings: "sbx_neo33/settings",
-      favs: "sbx_neo33/favs",
-      recents: "sbx_neo33/recents",
-      openElements: "sbx_neo33/open_elements",
-      openOverhaul: "sbx_neo33/open_overhaul",
-      widthElements: "sbx_neo33/w_elements",
-      widthOverhaul: "sbx_neo33/w_overhaul",
-      maxElements: "sbx_neo33/max_elements",
-      maxOverhaul: "sbx_neo33/max_overhaul",
-      tab: "sbx_neo33/tab",
-      cat: "sbx_neo33/cat",
-      compact: "sbx_neo33/compact",
-      hideCats: "sbx_neo33/hide_cats",
-      uiScale: "sbx_neo33/ui_scale",
-    },
-    defaults: {
-      enable: true,
-      restyleTopUI: true,
-      hideVanillaElementUI: true,
-      openElementsOnStart: true,
-      showPreview: true,
-      showTooltips: true,
-      autoCloseOnPick: false,
-      compactView: true,
-      hideCategories: false,
-      uiScale: 1.30, // bigger UI by default
-      hotkeys: true,
-      toasts: true,
-    },
+  // ---- tiny helpers ----
+  const qs = (s, r = document) => r.querySelector(s);
+  const qsa = (s, r = document) => Array.from(r.querySelectorAll(s));
+  const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+  const safeText = (el) => (el && (el.textContent || "")).trim();
+  const on = (el, ev, fn, opt) => el && el.addEventListener(ev, fn, opt);
+  const cssEscape = (s) => (window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/[^a-zA-Z0-9_-]/g, "\\$&"));
+
+  const NEO = (window.NEOUI = window.NEOUI || {});
+  if (NEO.__neo_modcenter_loaded) return;
+  NEO.__neo_modcenter_loaded = true;
+
+  const STORE = {
+    keyMods: "neo_modcenter_mods_key_guess",
+    keyInfoBar: "neo_infobar_enabled",
+    keyScale: "neo_ui_scale",
   };
 
-  const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
-  const $ = (sel, root = document) => root.querySelector(sel);
-  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+  const settings = {
+    infoBar: localStorage.getItem(STORE.keyInfoBar) !== "0",
+    scale: Number(localStorage.getItem(STORE.keyScale) || "1") || 1,
+  };
 
-  function safeParse(s, fallback) { try { return JSON.parse(s); } catch { return fallback; } }
-  function loadSettings() { return { ...MOD.defaults, ...(safeParse(localStorage.getItem(MOD.keys.settings) || "{}", {})) }; }
-  function saveSettings(s) { localStorage.setItem(MOD.keys.settings, JSON.stringify(s)); }
-
-  function loadList(key) {
-    const arr = safeParse(localStorage.getItem(key) || "[]", []);
-    return Array.isArray(arr) ? arr.filter(Boolean) : [];
-  }
-  function saveList(key, arr, cap) {
-    localStorage.setItem(key, JSON.stringify(cap ? arr.slice(0, cap) : arr));
-  }
-
-  function el(tag, attrs = {}, ...children) {
-    const n = document.createElement(tag);
-    for (const [k, v] of Object.entries(attrs)) {
-      if (k === "class") n.className = v;
-      else if (k === "style") n.setAttribute("style", v);
-      else if (k.startsWith("on") && typeof v === "function") n.addEventListener(k.slice(2), v);
-      else if (v != null) n.setAttribute(k, String(v));
+  // ---- CSS (scoped + safe z-index layering) ----
+  const style = document.createElement("style");
+  style.id = "neoModCenterStyles";
+  style.textContent = `
+    :root{
+      --neo-z-infobar: 999000;
+      --neo-z-panels: 999850;
+      --neo-z-modcenter: 999920;
+      --neo-radius: 16px;
+      --neo-gap: 12px;
+      --neo-pad: 14px;
+      --neo-line: rgba(255,255,255,.12);
+      --neo-bg: rgba(20,20,24,.88);
+      --neo-bg2: rgba(30,30,36,.92);
+      --neo-txt: rgba(255,255,255,.92);
+      --neo-txt2: rgba(255,255,255,.72);
+      --neo-accent: rgba(120,170,255,.95);
+      --neo-danger: rgba(255,90,90,.95);
+      --neo-shadow: 0 20px 60px rgba(0,0,0,.55);
+      --neo-scale: 1;
     }
-    for (const c of children) n.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
-    return n;
-  }
 
-  function injectCss(id, cssText) {
-    $(`#${id}`)?.remove();
-    const st = el("style", { id });
-    st.textContent = cssText;
-    document.head.appendChild(st);
-  }
-
-  function onGameReady(fn) {
-    if (typeof window.runAfterLoad === "function") window.runAfterLoad(fn);
-    else window.addEventListener("load", fn, { once: true });
-  }
-
-  function waitFor(fn, timeoutMs = 20000) {
-    return new Promise((resolve, reject) => {
-      const start = performance.now();
-      const t = setInterval(() => {
-        let val = null;
-        try { val = fn(); } catch {}
-        if (val) { clearInterval(t); resolve(val); }
-        else if (performance.now() - start > timeoutMs) { clearInterval(t); reject(new Error("timeout")); }
-      }, 60);
-    });
-  }
-
-  // ---------- cleanup old versions
-  function cleanupOld() {
-    [
-      "neo32Style","neo32Overlay","neo32Elements","neo32Overhaul","neo32EdgeL","neo32EdgeR","neo32Toast","neo32Tip",
-      "neo33Style","neo33Overlay","neo33Elements","neo33Overhaul","neo33EdgeL","neo33EdgeR","neo33Toast","neo33Tip",
-      "neo31Style","neo31Overlay","neo31Elements","neo31Overhaul","neo31EdgeL","neo31EdgeR","neo31Toast","neo31Tip"
-    ].forEach(id => $(`#${id}`)?.remove());
-    document.body.classList.remove("sbx-neo31","sbx-neo32","sbx-neo33","sbx-neo","sbx-pso","sbx-ohp");
-    $("#neo33TopElements")?.remove();
-    $("#neo33TopOverhaul")?.remove();
-  }
-
-  // ---------- UI scale
-  function getUiScale() {
-    const s = loadSettings();
-    const raw = localStorage.getItem(MOD.keys.uiScale);
-    const v = raw == null ? s.uiScale : parseFloat(raw);
-    return clamp(Number.isFinite(v) ? v : s.uiScale, 1.0, 1.65);
-  }
-  function setUiScale(v) {
-    const next = clamp(v, 1.0, 1.65);
-    localStorage.setItem(MOD.keys.uiScale, String(next));
-    document.body.style.setProperty("--neo-ui-scale", String(next));
-    safeUpdateTopOffset();
-    toast(`UI size: ${next.toFixed(2)}`);
-  }
-
-  // ---------- toast
-  function toast(msg) {
-    if (!loadSettings().toasts) return;
-    const t = $("#neo33Toast");
-    if (!t) return;
-    t.textContent = msg;
-    t.style.display = "block";
-    clearTimeout(toast._tm);
-    toast._tm = setTimeout(() => (t.style.display = "none"), 1200);
-  }
-
-  // ---------- CSS (SAFE: no display:flex overrides on #controls)
-  function cssNeo() {
-    return `
-body.sbx-neo33{
-  --neo-ui-scale: ${getUiScale()};
-  --neo-top: 110px;
-  --neo-w-e: 520px;
-  --neo-w-o: 520px;
-
-  --neo-panel: rgba(18,21,28,.92);
-  --neo-panel2: rgba(14,16,22,.92);
-  --neo-border: rgba(255,255,255,.12);
-  --neo-border2: rgba(255,255,255,.08);
-  --neo-text: rgba(255,255,255,.92);
-  --neo-muted: rgba(255,255,255,.62);
-  --neo-shadow: 0 16px 48px rgba(0,0,0,.55);
-  --neo-shadow2: 0 10px 30px rgba(0,0,0,.45);
-}
-
-body.sbx-neo33.neo-hide-vanilla #categoryControls,
-body.sbx-neo33.neo-hide-vanilla #elementControls{ display:none !important; }
-
-/* BIG readable: font + padding only (DO NOT change layout engine) */
-body.sbx-neo33 #toolControls,
-body.sbx-neo33 #controls{
-  font-size: calc(14px * var(--neo-ui-scale));
-}
-body.sbx-neo33 #toolControls .controlButton,
-body.sbx-neo33 #controls .controlButton,
-body.sbx-neo33 #controls button{
-  font-size: calc(14px * var(--neo-ui-scale)) !important;
-  padding: calc(6px * var(--neo-ui-scale)) calc(10px * var(--neo-ui-scale)) !important;
-  min-height: calc(34px * var(--neo-ui-scale));
-  border-radius: calc(12px * var(--neo-ui-scale)) !important;
-}
-
-/* New-style look */
-body.sbx-neo33.neo-topstyle #toolControls .controlButton,
-body.sbx-neo33.neo-topstyle #controls .controlButton{
-  border: 1px solid var(--neo-border2) !important;
-  background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04)) !important;
-  color: var(--neo-text) !important;
-  box-shadow: 0 6px 16px rgba(0,0,0,.25);
-}
-body.sbx-neo33.neo-topstyle #controls button:not(.controlButton){
-  border: 1px solid rgba(255,255,255,.20) !important;
-  box-shadow: 0 6px 14px rgba(0,0,0,.20);
-}
-
-/* Mods menu: style ONLY, no forced weird sizes */
-body.sbx-neo33.neo-topstyle #modManager,
-body.sbx-neo33.neo-topstyle #modManagerScreen,
-body.sbx-neo33.neo-topstyle #modMenu,
-body.sbx-neo33.neo-topstyle #modMenuScreen{
-  border-radius: 18px !important;
-  border: 1px solid var(--neo-border) !important;
-  background: var(--neo-panel) !important;
-  box-shadow: var(--neo-shadow) !important;
-  color: var(--neo-text) !important;
-}
-
-/* Our mod search bar */
-#neo33ModTools{
-  display:flex;
-  gap: 10px;
-  align-items:center;
-  padding: 10px 10px;
-  margin-bottom: 10px;
-  border-radius: 16px;
-  background: rgba(0,0,0,.18);
-  border: 1px solid rgba(255,255,255,.10);
-}
-#neo33ModSearch{
-  flex: 1;
-  padding: 10px 12px;
-  border-radius: 14px;
-  border: 1px solid rgba(255,255,255,.14);
-  background: rgba(255,255,255,.05);
-  color: rgba(255,255,255,.92);
-  outline: none;
-}
-#neo33ModSearch::placeholder{ color: rgba(255,255,255,.60); }
-.neo33MiniBtn{
-  padding: 10px 12px;
-  border-radius: 14px;
-  border: 1px solid rgba(255,255,255,.14);
-  background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04));
-  color: rgba(255,255,255,.92);
-  cursor:pointer;
-}
-
-/* Overlay */
-#neo33Overlay{
-  position: fixed; inset: 0;
-  background: rgba(0,0,0,.40);
-  z-index: 999980;
-  display:none;
-  pointer-events:none;
-}
-#neo33Overlay.open{
-  display:block;
-  pointer-events:auto;
-}
-
-/* Edge tabs */
-#neo33EdgeL, #neo33EdgeR{
-  position: fixed;
-  top: calc(var(--neo-top) + 12px);
-  z-index: 999995;
-  user-select: none;
-  cursor: pointer;
-  color: var(--neo-text);
-  background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04));
-  border: 1px solid var(--neo-border);
-  box-shadow: var(--neo-shadow2);
-  padding: 10px 10px;
-  border-radius: 14px;
-  opacity: .96;
-}
-#neo33EdgeL{ left: 8px; }
-#neo33EdgeR{ right: 8px; }
-#neo33EdgeL .lbl, #neo33EdgeR .lbl{ display:block; font-weight:900; letter-spacing:.6px; font-size:12px; }
-#neo33EdgeL .sub, #neo33EdgeR .sub{ display:block; font-size:11px; color: var(--neo-muted); margin-top:2px; }
-#neo33EdgeL.hidden, #neo33EdgeR.hidden{ display:none; }
-
-/* Drawers */
-.neo33Drawer{
-  position: fixed;
-  top: var(--neo-top);
-  height: calc(100vh - var(--neo-top));
-  z-index: 999990;
-  color: var(--neo-text);
-  background: var(--neo-panel);
-  border: 1px solid var(--neo-border);
-  box-shadow: var(--neo-shadow);
-  border-radius: 18px;
-  display:flex;
-  flex-direction: column;
-  max-width: calc(100vw - 20px);
-  min-height: 280px;
-}
-#neo33Elements{
-  left: 10px;
-  width: var(--neo-w-e);
-  transform: translateX(-110%);
-  transition: transform 160ms ease;
-}
-#neo33Elements.open{ transform: translateX(0); }
-
-#neo33Overhaul{
-  right: 10px;
-  width: var(--neo-w-o);
-  transform: translateX(110%);
-  transition: transform 160ms ease;
-}
-#neo33Overhaul.open{ transform: translateX(0); }
-
-.neo33Drawer.max{
-  left: 10px !important;
-  right: 10px !important;
-  width: auto !important;
-}
-
-/* Header */
-.neo33Hdr{
-  display:flex; align-items:center; justify-content:space-between;
-  gap:8px;
-  padding:12px;
-  border-bottom: 1px solid var(--neo-border2);
-  background: rgba(0,0,0,.10);
-  border-top-left-radius: 18px;
-  border-top-right-radius: 18px;
-}
-.neo33Title{ display:flex; flex-direction:column; gap:2px; }
-.neo33Title .t{ font-weight:900; letter-spacing:.6px; }
-.neo33Title .s{ font-size:12px; color: var(--neo-muted); }
-.neo33Btns{ display:flex; gap:8px; }
-.neo33Btn{
-  border-radius:12px;
-  border: 1px solid var(--neo-border2);
-  background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04));
-  color: var(--neo-text);
-  padding:8px 10px;
-  cursor:pointer;
-}
-
-/* Tabs + Search */
-.neo33Tabs{ display:flex; gap:8px; padding:10px 12px 0 12px; }
-.neo33Tab{
-  flex:1; text-align:center;
-  padding:8px 10px;
-  border-radius:999px;
-  border:1px solid var(--neo-border2);
-  background: rgba(255,255,255,.04);
-  cursor:pointer;
-}
-.neo33Tab.active{ border-color: rgba(76,201,240,.55); background: rgba(76,201,240,.10); }
-
-.neo33SearchRow{ display:flex; gap:8px; padding:10px 12px 12px 12px; border-bottom: 1px solid var(--neo-border2); }
-#neo33Search{
-  flex:1;
-  border-radius:14px;
-  border:1px solid var(--neo-border2);
-  background: rgba(255,255,255,.05);
-  color: var(--neo-text);
-  padding:10px 12px;
-  outline:none;
-}
-
-/* Body layout */
-#neo33ElBody{
-  flex:1;
-  display:grid;
-  grid-template-columns: 170px 1fr;
-  gap:10px;
-  padding:10px 12px 12px 12px;
-  overflow:hidden;
-  min-height: 220px; /* important */
-}
-body.sbx-neo33.neo-hidecats #neo33ElBody{ grid-template-columns: 1fr; }
-body.sbx-neo33.neo-hidecats #neo33Cats{ display:none; }
-
-#neo33Cats{
-  border:1px solid var(--neo-border2);
-  border-radius:14px;
-  background: var(--neo-panel2);
-  overflow:auto;
-  padding:8px;
-}
-
-#neo33ElRight{
-  display:flex;
-  flex-direction:column;
-  gap:10px;
-  overflow:hidden;
-  min-height: 220px;
-}
-
-#neo33ElGridWrap{
-  flex: 1;
-  border:1px solid var(--neo-border2);
-  border-radius:14px;
-  background: var(--neo-panel2);
-  overflow:hidden;
-  display:flex;
-  flex-direction:column;
-  min-height: 200px; /* important */
-}
-#neo33ElGridHead{
-  padding:10px;
-  border-bottom:1px solid var(--neo-border2);
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  gap:10px;
-}
-#neo33Count{ font-size:12px; color: var(--neo-muted); }
-
-/* Auto grid (prevents stretching) */
-#neo33ElGrid{
-  padding:10px;
-  overflow:auto;
-  display:grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap:10px;
-  min-height: 180px; /* important */
-}
-body.sbx-neo33.neo-compact #neo33ElGrid{ grid-template-columns: repeat(auto-fill, minmax(125px, 1fr)); gap:8px; }
-
-.neo33ElBtn{
-  display:flex;
-  align-items:center;
-  gap:10px;
-  padding:10px;
-  border-radius:14px;
-  border:1px solid var(--neo-border2);
-  background: linear-gradient(180deg, rgba(255,255,255,.09), rgba(255,255,255,.03));
-  cursor:pointer;
-}
-.neo33Dot{ width:14px; height:14px; border-radius:999px; box-shadow: inset 0 0 0 2px rgba(0,0,0,.25); }
-.neo33Name{ overflow:hidden; text-overflow: ellipsis; white-space: nowrap; }
-.neo33Star{ margin-left:auto; opacity:.9; }
-
-#neo33Preview{
-  border:1px solid var(--neo-border2);
-  border-radius:14px;
-  background: rgba(255,255,255,.04);
-  padding:10px;
-  display:none;
-}
-#neo33Preview.show{ display:block; }
-#neo33Preview .muted{ color: var(--neo-muted); font-size:12px; }
-
-/* Toast */
-#neo33Toast{
-  position: fixed; left: 12px; bottom: 12px;
-  z-index: 999999; display:none;
-  padding: 10px 12px;
-  border-radius: 14px;
-  background: rgba(12,14,18,.94);
-  border: 1px solid var(--neo-border);
-  color: var(--neo-text);
-  box-shadow: var(--neo-shadow2);
-  font-size: 12px;
-}
-
-/* Overhaul body */
-#neo33OverBody{ flex:1; overflow:auto; padding:10px 12px 12px 12px; }
-.neo33Section{ margin: 10px 0 8px 0; font-weight:900; letter-spacing:.4px; }
-.neo33Toggle{ display:flex; gap:10px; align-items:flex-start; padding:10px; border-radius:14px; cursor:pointer; }
-.neo33Toggle:hover{ background: rgba(255,255,255,.05); }
-.neo33Small{ font-size:12px; color: var(--neo-muted); margin-top:2px; }
-`;
-  }
-
-  // ---------- element helpers
-  function elementColor(name) {
-    const def = window.elements?.[name];
-    const c = def?.color;
-    if (Array.isArray(c) && c.length) return c[0];
-    if (typeof c === "string") return c;
-    return "rgba(255,255,255,.35)";
-  }
-  function prettyName(name) {
-    const def = window.elements?.[name];
-    const candidate = def?.name || def?.displayName || def?.label;
-    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
-    return String(name).replace(/_/g, " ");
-  }
-
-  function buildIndex() {
-    const byCat = new Map();
-    const all = [];
-    for (const [name, def] of Object.entries(window.elements || {})) {
-      if (!def || def.hidden) continue;
-      const cat = def.category || "other";
-      if (!byCat.has(cat)) byCat.set(cat, []);
-      byCat.get(cat).push(name);
-      all.push(name);
+    /* ===== Mod Center Overlay ===== */
+    #neoModCenterOverlay{
+      position: fixed;
+      inset: 0;
+      z-index: var(--neo-z-modcenter);
+      display: none;
+      align-items: stretch;
+      justify-content: stretch;
+      background: rgba(0,0,0,.55);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      color: var(--neo-txt);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      transform: translateZ(0);
     }
-    const sortFn = (a, b) => prettyName(a).localeCompare(prettyName(b));
-    for (const arr of byCat.values()) arr.sort(sortFn);
-    all.sort(sortFn);
-    const cats = ["all", ...Array.from(byCat.keys()).sort((a, b) => String(a).localeCompare(String(b)))];
-    return { byCat, all, cats };
-  }
 
-  function buildCategoryLabelsFromDOM() {
-    const map = new Map();
-    for (const b of $$(".categoryButton")) {
-      const id = b.id || "";
-      const key = id.startsWith("categoryButton-") ? id.replace("categoryButton-", "") : (b.getAttribute("category") || b.getAttribute("data-category"));
-      if (!key) continue;
-      const label = (b.textContent || "").trim();
-      if (label) map.set(key, label);
+    #neoModCenterOverlay.neo-open{ display: flex; }
+
+    .neoMC{
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(180deg, rgba(18,18,22,.92), rgba(10,10,12,.88));
+      border: 1px solid var(--neo-line);
+      box-shadow: var(--neo-shadow);
+      display: flex;
+      overflow: hidden;
+      font-size: calc(14px * var(--neo-scale));
     }
-    return map;
+
+    .neoMC__left{
+      width: min(360px, 42vw);
+      min-width: 270px;
+      border-right: 1px solid var(--neo-line);
+      background: rgba(14,14,18,.82);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .neoMC__right{
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: rgba(18,18,22,.75);
+      min-width: 0;
+    }
+
+    .neoMC__top{
+      display: flex;
+      gap: var(--neo-gap);
+      align-items: center;
+      padding: var(--neo-pad);
+      border-bottom: 1px solid var(--neo-line);
+      background: rgba(10,10,12,.55);
+    }
+
+    .neoMC__title{
+      display:flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .neoMC__title b{
+      font-size: calc(16px * var(--neo-scale));
+      letter-spacing: .2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .neoMC__title span{
+      color: var(--neo-txt2);
+      font-size: calc(12px * var(--neo-scale));
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .neoBtn{
+      border: 1px solid var(--neo-line);
+      background: rgba(255,255,255,.06);
+      color: var(--neo-txt);
+      padding: 10px 12px;
+      border-radius: 12px;
+      cursor: pointer;
+      user-select: none;
+      font-size: calc(13px * var(--neo-scale));
+      line-height: 1;
+    }
+    .neoBtn:hover{ background: rgba(255,255,255,.10); }
+    .neoBtn:active{ transform: translateY(1px); }
+    .neoBtn.neoPrimary{ border-color: rgba(120,170,255,.4); background: rgba(120,170,255,.18); }
+    .neoBtn.neoDanger{ border-color: rgba(255,90,90,.35); background: rgba(255,90,90,.16); }
+    .neoBtn.neoGhost{ background: transparent; }
+
+    .neoRow{ display:flex; gap: var(--neo-gap); align-items:center; min-width: 0; }
+    .neoGrow{ flex: 1; min-width: 0; }
+    .neoSpacer{ flex: 1; }
+
+    .neoInput{
+      width: 100%;
+      border: 1px solid var(--neo-line);
+      background: rgba(0,0,0,.22);
+      color: var(--neo-txt);
+      padding: 10px 12px;
+      border-radius: 12px;
+      outline: none;
+      font-size: calc(13px * var(--neo-scale));
+    }
+    .neoInput::placeholder{ color: rgba(255,255,255,.45); }
+
+    .neoTabs{
+      display:flex;
+      gap: 8px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--neo-line);
+    }
+
+    .neoTab{
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--neo-line);
+      background: rgba(255,255,255,.06);
+      cursor: pointer;
+      font-size: calc(13px * var(--neo-scale));
+    }
+    .neoTab.neoActive{
+      border-color: rgba(120,170,255,.45);
+      background: rgba(120,170,255,.18);
+    }
+
+    .neoPanel{
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: var(--neo-pad);
+      overscroll-behavior: contain;
+    }
+
+    .neoCard{
+      border: 1px solid var(--neo-line);
+      background: rgba(255,255,255,.05);
+      border-radius: var(--neo-radius);
+      padding: 12px;
+      margin-bottom: 10px;
+    }
+
+    .neoCard h3{
+      margin: 0 0 6px 0;
+      font-size: calc(14px * var(--neo-scale));
+    }
+    .neoCard p{ margin: 0; color: var(--neo-txt2); font-size: calc(12px * var(--neo-scale)); }
+
+    .neoModItem{
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      padding: 10px;
+      border: 1px solid var(--neo-line);
+      background: rgba(0,0,0,.18);
+      border-radius: 14px;
+      margin-bottom: 10px;
+    }
+
+    .neoModName{
+      min-width: 0;
+      display:flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .neoModName b{
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: calc(13px * var(--neo-scale));
+    }
+    .neoModName span{
+      color: var(--neo-txt2);
+      font-size: calc(12px * var(--neo-scale));
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .neoBadge{
+      font-size: calc(11px * var(--neo-scale));
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--neo-line);
+      background: rgba(255,255,255,.06);
+      color: var(--neo-txt2);
+      white-space: nowrap;
+    }
+    .neoBadge.neoOk{ border-color: rgba(80,220,140,.35); background: rgba(80,220,140,.12); color: rgba(200,255,225,.9); }
+    .neoBadge.neoWarn{ border-color: rgba(255,200,90,.35); background: rgba(255,200,90,.12); color: rgba(255,240,210,.92); }
+
+    .neoFooter{
+      padding: var(--neo-pad);
+      border-top: 1px solid var(--neo-line);
+      display:flex;
+      gap: var(--neo-gap);
+      align-items: center;
+      background: rgba(10,10,12,.45);
+    }
+
+    /* ===== Info Bar ===== */
+    #neoInfoBar{
+      position: fixed;
+      z-index: var(--neo-z-infobar);
+      right: 10px;
+      top: 10px;
+      max-width: min(520px, 92vw);
+      pointer-events: none;
+      display: none;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      color: var(--neo-txt);
+      font-size: 12px;
+      opacity: .92;
+    }
+    #neoInfoBar.neo-on{ display: block; }
+    #neoInfoBar .neoInfoPill{
+      border: 1px solid rgba(255,255,255,.16);
+      background: rgba(12,12,14,.62);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border-radius: 999px;
+      padding: 8px 12px;
+      display:flex;
+      gap: 10px;
+      align-items:center;
+      flex-wrap: wrap;
+    }
+    #neoInfoBar b{ color: rgba(255,255,255,.92); font-weight: 700; }
+    #neoInfoBar span{ color: rgba(255,255,255,.72); }
+
+    /* ===== Settings QoL: make menu screens scrollable + readable ===== */
+    .neoScrollFix{
+      max-height: min(86vh, 900px) !important;
+      overflow: auto !important;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+    }
+    .neoStickyTop{
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: rgba(0,0,0,.18);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border-bottom: 1px solid rgba(255,255,255,.12);
+      padding-bottom: 10px;
+      margin-bottom: 10px;
+    }
+  `;
+  document.head.appendChild(style);
+
+  // ---- UI scale ----
+  function applyScale() {
+    document.documentElement.style.setProperty("--neo-scale", String(clamp(settings.scale, 0.85, 1.35)));
+  }
+  applyScale();
+
+  // ---- Find / close other panels so nothing overlaps ----
+  function closeOtherPanels() {
+    // If your UI mod exposes hooks, use them
+    try { NEO.closeElements && NEO.closeElements(); } catch {}
+    try { NEO.closeSettings && NEO.closeSettings(); } catch {}
+
+    // Otherwise: best-effort hide known ids/classes without breaking the game
+    const ids = [
+      "neo32ElDrawer","neo31ElDrawer","neoElDrawer","neoElementsDrawer",
+      "neo32Settings","neo31Settings","neoSettingsDrawer","neoOverhaulSettings"
+    ];
+    for (const id of ids) {
+      const el = document.getElementById(id);
+      if (el) el.classList.remove("neo-open");
+    }
   }
 
-  // ---------- state
-  let currentTab = localStorage.getItem(MOD.keys.tab) || "all";
-  let currentCat = localStorage.getItem(MOD.keys.cat) || "all";
-
-  const getFavs = () => loadList(MOD.keys.favs);
-  const setFavs = (a) => saveList(MOD.keys.favs, a, 40);
-  const getRecents = () => loadList(MOD.keys.recents);
-  const setRecents = (a) => saveList(MOD.keys.recents, a, 24);
-
-  function isCompact() {
-    const raw = localStorage.getItem(MOD.keys.compact);
-    return raw == null ? !!loadSettings().compactView : raw === "1";
+  // ---- Mods storage (robust guesses) ----
+  function isModsArray(v) {
+    return Array.isArray(v) && v.length >= 0 && v.every(x => typeof x === "string");
   }
-  function isHideCats() {
-    const raw = localStorage.getItem(MOD.keys.hideCats);
-    return raw == null ? !!loadSettings().hideCategories : raw === "1";
-  }
-  function applyViewFlags() {
-    document.body.classList.toggle("neo-compact", isCompact());
-    document.body.classList.toggle("neo-hidecats", isHideCats());
+  function looksLikeModString(s) {
+    if (typeof s !== "string") return false;
+    const t = s.trim().toLowerCase();
+    return t.endsWith(".js") || t.startsWith("http://") || t.startsWith("https://") || t.includes(".js?");
   }
 
-  // ---------- drawers + layout
-  function isOpenElements() { return localStorage.getItem(MOD.keys.openElements) === "1"; }
-  function isOpenOverhaul() { return localStorage.getItem(MOD.keys.openOverhaul) === "1"; }
-  function isMax(which) { return localStorage.getItem(which === "elements" ? MOD.keys.maxElements : MOD.keys.maxOverhaul) === "1"; }
-  function desiredWidth(key, fallback) { return clamp(parseInt(localStorage.getItem(key) || String(fallback), 10) || fallback, 340, 900); }
+  function guessModsKey() {
+    const cached = localStorage.getItem(STORE.keyMods);
+    if (cached && localStorage.getItem(cached) != null) return cached;
 
-  function syncOverlay() {
-    const any = isOpenElements() || isOpenOverhaul();
-    $("#neo33Overlay")?.classList.toggle("open", any);
-  }
-  function syncEdgeTabs() {
-    const enabled = loadSettings().enable;
-    $("#neo33EdgeL")?.classList.toggle("hidden", !enabled || isOpenElements());
-    $("#neo33EdgeR")?.classList.toggle("hidden", !enabled || isOpenOverhaul());
-  }
-
-  function setOpenElements(open) {
-    if (open && window.innerWidth < 900) setOpenOverhaul(false);
-    localStorage.setItem(MOD.keys.openElements, open ? "1" : "0");
-    $("#neo33Elements")?.classList.toggle("open", open);
-    safeUpdateTopOffset();
-    updateLayout();
-  }
-  function setOpenOverhaul(open) {
-    if (open && window.innerWidth < 900) setOpenElements(false);
-    localStorage.setItem(MOD.keys.openOverhaul, open ? "1" : "0");
-    $("#neo33Overhaul")?.classList.toggle("open", open);
-    safeUpdateTopOffset();
-    updateLayout();
-  }
-  function setMax(which, on) {
-    localStorage.setItem(which === "elements" ? MOD.keys.maxElements : MOD.keys.maxOverhaul, on ? "1" : "0");
-    const id = which === "elements" ? "#neo33Elements" : "#neo33Overhaul";
-    $(id)?.classList.toggle("max", on);
-
-    // one-max-at-a-time
-    if (on) {
-      if (which === "elements") {
-        localStorage.setItem(MOD.keys.maxOverhaul, "0");
-        $("#neo33Overhaul")?.classList.remove("max");
-        setOpenOverhaul(false);
-        setOpenElements(true);
-      } else {
-        localStorage.setItem(MOD.keys.maxElements, "0");
-        $("#neo33Elements")?.classList.remove("max");
-        setOpenElements(false);
-        setOpenOverhaul(true);
+    const candidates = ["enabledMods","mods","modList","modsEnabled","enabled_mods","enabled-mods","sb_mods","sbmods"];
+    for (const k of candidates) {
+      const raw = localStorage.getItem(k);
+      if (!raw) continue;
+      try {
+        const v = JSON.parse(raw);
+        if (isModsArray(v) && v.every(looksLikeModString)) {
+          localStorage.setItem(STORE.keyMods, k);
+          return k;
+        }
+      } catch {}
+      // sometimes stored as ; separated string
+      if (typeof raw === "string" && raw.includes(".js")) {
+        const parts = raw.split(";").map(x => x.trim()).filter(Boolean);
+        if (parts.length && parts.every(looksLikeModString)) {
+          localStorage.setItem(STORE.keyMods, k);
+          return k;
+        }
       }
     }
-    updateLayout();
-  }
 
-  function updateLayout() {
-    const openE = isOpenElements();
-    const openO = isOpenOverhaul();
-    const maxE = isMax("elements");
-    const maxO = isMax("overhaul");
-
-    let wE = desiredWidth(MOD.keys.widthElements, 520);
-    let wO = desiredWidth(MOD.keys.widthOverhaul, 520);
-
-    if (!maxE && !maxO && openE && openO) {
-      const vw = window.innerWidth;
-      const available = Math.max(360, vw - 32);
-      const half = Math.max(360, Math.floor((available - 12) / 2));
-      wE = Math.min(wE, half);
-      wO = Math.min(wO, half);
+    // scan everything
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k) continue;
+      const raw = localStorage.getItem(k);
+      if (!raw) continue;
+      if (!raw.includes(".js") && !raw.includes("http")) continue;
+      try {
+        const v = JSON.parse(raw);
+        if (isModsArray(v) && v.some(looksLikeModString)) {
+          localStorage.setItem(STORE.keyMods, k);
+          return k;
+        }
+      } catch {
+        const parts = raw.split(";").map(x => x.trim()).filter(Boolean);
+        if (parts.length && parts.every(looksLikeModString)) {
+          localStorage.setItem(STORE.keyMods, k);
+          return k;
+        }
+      }
     }
-
-    document.body.style.setProperty("--neo-w-e", `${wE}px`);
-    document.body.style.setProperty("--neo-w-o", `${wO}px`);
-
-    syncOverlay();
-    syncEdgeTabs();
+    return null;
   }
 
-  // ---------- SAFE top offset (this fixes your “drawer too short” issue)
-  function safeUpdateTopOffset() {
-    const controls = $("#controls");
-    const tool = $("#toolControls");
-    if (!controls && !tool) return;
+  function readEnabledMods() {
+    // prefer game globals if available
+    if (Array.isArray(window.enabledMods)) return window.enabledMods.slice();
 
-    let top = 90;
-
-    if (controls) top = Math.max(top, Math.round(controls.getBoundingClientRect().bottom) + 10);
-    if (tool) top = Math.max(top, Math.round(tool.getBoundingClientRect().bottom) + 10);
-
-    // clamp so drawers NEVER become tiny even if the UI grows
-    const maxTop = Math.floor(window.innerHeight * 0.32);
-    top = clamp(top, 70, maxTop);
-
-    document.body.style.setProperty("--neo-top", `${top}px`);
+    const k = guessModsKey();
+    if (!k) return [];
+    const raw = localStorage.getItem(k);
+    if (!raw) return [];
+    try {
+      const v = JSON.parse(raw);
+      if (isModsArray(v)) return v.slice();
+    } catch {}
+    return raw.split(";").map(x => x.trim()).filter(Boolean);
   }
 
-  // ---------- UI build
-  function ensureUI() {
-    if ($("#neo33Elements")) return;
+  function writeEnabledMods(mods) {
+    const clean = Array.from(new Set(mods.map(s => s.trim()).filter(Boolean)));
+    if (Array.isArray(window.enabledMods)) window.enabledMods = clean.slice();
 
-    document.body.classList.add("sbx-neo33");
-
-    document.body.appendChild(el("div", { id: "neo33Overlay", onclick: () => { setOpenElements(false); setOpenOverhaul(false); } }));
-    document.body.appendChild(el("div", { id: "neo33EdgeL", onclick: () => setOpenElements(true), title: "Open Elements (B)" },
-      el("span", { class: "lbl" }, "ELEMENTS"), el("span", { class: "sub" }, "Open")));
-    document.body.appendChild(el("div", { id: "neo33EdgeR", onclick: () => setOpenOverhaul(true), title: "Open Overhaul (O)" },
-      el("span", { class: "lbl" }, "OVERHAUL"), el("span", { class: "sub" }, "Settings")));
-    document.body.appendChild(el("div", { id: "neo33Toast" }));
-
-    const elements = el("div", { id: "neo33Elements", class: "neo33Drawer" },
-      el("div", { class: "neo33Hdr" },
-        el("div", { class: "neo33Title" },
-          el("div", { class: "t" }, "ELEMENTS"),
-          el("div", { class: "s" }, "Scroll + click works again (fixed)"))
-        ,
-        el("div", { class: "neo33Btns" },
-          el("button", { class: "neo33Btn", onclick: () => { localStorage.setItem(MOD.keys.compact, isCompact() ? "0" : "1"); applyViewFlags(); renderElements(); } }, "▦"),
-          el("button", { class: "neo33Btn", onclick: () => { localStorage.setItem(MOD.keys.hideCats, isHideCats() ? "0" : "1"); applyViewFlags(); } }, "☰"),
-          el("button", { class: "neo33Btn", onclick: () => setMax("elements", !isMax("elements")) }, "⤢"),
-          el("button", { class: "neo33Btn", onclick: () => setOpenOverhaul(true) }, "⚙"),
-          el("button", { class: "neo33Btn", onclick: () => setOpenElements(false) }, "×"),
-        )
-      ),
-      el("div", { class: "neo33Tabs" },
-        el("div", { class: "neo33Tab", id: "neo33TabAll", onclick: () => setTab("all") }, "All"),
-        el("div", { class: "neo33Tab", id: "neo33TabFav", onclick: () => setTab("fav") }, "Favorites"),
-        el("div", { class: "neo33Tab", id: "neo33TabRec", onclick: () => setTab("recent") }, "Recents"),
-      ),
-      el("div", { class: "neo33SearchRow" },
-        el("input", { id: "neo33Search", type: "text", placeholder: "Search elements…" }),
-        el("button", { class: "neo33Btn", onclick: () => { $("#neo33Search").value = ""; renderElements(); } }, "×"),
-      ),
-      el("div", { id: "neo33ElBody" },
-        el("div", { id: "neo33Cats" }),
-        el("div", { id: "neo33ElRight" },
-          el("div", { id: "neo33ElGridWrap" },
-            el("div", { id: "neo33ElGridHead" },
-              el("div", { id: "neo33Count" }, ""),
-              el("div", { style: "display:flex; gap:8px; align-items:center;" },
-                el("button", { class: "neo33Btn", onclick: () => setOpenElements(false) }, "Hide"),
-              )
-            ),
-            el("div", { id: "neo33ElGrid" })
-          ),
-          el("div", { id: "neo33Preview" })
-        )
-      )
-    );
-
-    const overhaul = el("div", { id: "neo33Overhaul", class: "neo33Drawer" },
-      el("div", { class: "neo33Hdr" },
-        el("div", { class: "neo33Title" },
-          el("div", { class: "t" }, "OVERHAUL"),
-          el("div", { class: "s" }, "Ctrl+0 = panic reset")),
-        el("div", { class: "neo33Btns" },
-          el("button", { class: "neo33Btn", onclick: () => setMax("overhaul", !isMax("overhaul")) }, "⤢"),
-          el("button", { class: "neo33Btn", onclick: () => setOpenElements(true) }, "☰"),
-          el("button", { class: "neo33Btn", onclick: () => setOpenOverhaul(false) }, "×"),
-        )
-      ),
-      el("div", { id: "neo33OverBody" })
-    );
-
-    document.body.append(elements, overhaul);
-
-    $("#neo33Search").addEventListener("input", () => renderElements());
-  }
-
-  function addTopButtons() {
-    const tc = $("#toolControls");
-    if (!tc) return;
-
-    if (!$("#neo33TopElements")) {
-      const b = el("button", { id: "neo33TopElements", class: "controlButton", onclick: () => setOpenElements(!isOpenElements()) }, "☰ Elements");
-      tc.prepend(b);
-    }
-    if (!$("#neo33TopOverhaul")) {
-      const b = el("button", { id: "neo33TopOverhaul", class: "controlButton", onclick: () => setOpenOverhaul(!isOpenOverhaul()) }, "⚙ Overhaul");
-      tc.appendChild(b);
+    const k = guessModsKey() || "enabledMods";
+    try {
+      localStorage.setItem(k, JSON.stringify(clean));
+      localStorage.setItem(STORE.keyMods, k);
+      return k;
+    } catch {
+      // fallback
+      localStorage.setItem(k, clean.join(";"));
+      localStorage.setItem(STORE.keyMods, k);
+      return k;
     }
   }
 
-  // ---------- tabs / cats / render
-  function setTab(t) {
-    currentTab = t;
-    localStorage.setItem(MOD.keys.tab, t);
-    $("#neo33TabAll")?.classList.toggle("active", t === "all");
-    $("#neo33TabFav")?.classList.toggle("active", t === "fav");
-    $("#neo33TabRec")?.classList.toggle("active", t === "recent");
-    renderCats();
-    renderElements();
-  }
-  function setCat(c) {
-    currentCat = c;
-    localStorage.setItem(MOD.keys.cat, c);
-    renderCats();
-    renderElements();
+  function loadedModsSet() {
+    // Sandboxels has loadedMods in newer versions :contentReference[oaicite:1]{index=1}
+    const arr = Array.isArray(window.loadedMods) ? window.loadedMods : [];
+    return new Set(arr.map(s => String(s)));
   }
 
-  function renderCats() {
-    const wrap = $("#neo33Cats");
-    if (!wrap) return;
-    const { cats } = buildIndex();
-    const labelMap = buildCategoryLabelsFromDOM();
+  // ---- Mod Center DOM ----
+  const overlay = document.createElement("div");
+  overlay.id = "neoModCenterOverlay";
+  overlay.innerHTML = `
+    <div class="neoMC" role="dialog" aria-modal="true" aria-label="Neo Mod Center">
+      <div class="neoMC__left">
+        <div class="neoMC__top">
+          <div class="neoMC__title neoGrow">
+            <b>Neo Mod Center</b>
+            <span>Big, scrollable, clickable — no weird stretching</span>
+          </div>
+          <button class="neoBtn neoGhost" id="neoMC_Close" title="Close (Esc)">✕</button>
+        </div>
 
-    wrap.innerHTML = "";
-    for (const c of cats) {
-      const label = (c === "all") ? "All" : (labelMap.get(c) || String(c).replace(/_/g, " "));
-      const btn = el("button", { class: `neo33ElBtn`, style: `justify-content:flex-start; width:100%;` }, label);
-      btn.onclick = () => setCat(c);
-      if (currentCat === c) btn.style.outline = "2px solid rgba(167,139,250,.45)";
-      wrap.appendChild(btn);
+        <div class="neoTabs" id="neoMC_Tabs">
+          <div class="neoTab neoActive" data-tab="installed">Installed</div>
+          <div class="neoTab" data-tab="add">Add</div>
+          <div class="neoTab" data-tab="tools">Tools</div>
+        </div>
+
+        <div class="neoPanel" id="neoMC_LeftPanel">
+          <div class="neoCard">
+            <h3>Search</h3>
+            <input class="neoInput" id="neoMC_Search" placeholder="Search installed mods..." />
+          </div>
+
+          <div class="neoCard">
+            <h3>UI Size</h3>
+            <div class="neoRow">
+              <button class="neoBtn" id="neoMC_Smaller">A−</button>
+              <button class="neoBtn" id="neoMC_Bigger">A+</button>
+              <div class="neoSpacer"></div>
+              <label class="neoRow" style="gap:8px;">
+                <input type="checkbox" id="neoMC_InfoToggle" />
+                <span style="color:rgba(255,255,255,.78); font-size:12px;">Info bar</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="neoCard">
+            <h3>Quick actions</h3>
+            <div class="neoRow" style="flex-wrap:wrap;">
+              <button class="neoBtn neoPrimary" id="neoMC_Reload">Reload</button>
+              <button class="neoBtn" id="neoMC_CopyAll">Copy list</button>
+              <button class="neoBtn neoDanger" id="neoMC_RemoveAll">Remove all</button>
+            </div>
+            <p style="margin-top:8px;">Reload is needed after adding/removing mods.</p>
+          </div>
+
+          <div class="neoCard">
+            <h3>Official mod list</h3>
+            <div class="neoRow" style="flex-wrap:wrap;">
+              <button class="neoBtn" id="neoMC_OpenList">Open mod list</button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="neoMC__right">
+        <div class="neoMC__top">
+          <div class="neoGrow" style="min-width:0;">
+            <b id="neoMC_RightTitle">Installed Mods</b>
+            <span id="neoMC_RightSub" style="display:block; color:rgba(255,255,255,.72); font-size:12px; margin-top:2px;">
+              Manage what loads on refresh
+            </span>
+          </div>
+          <button class="neoBtn" id="neoMC_Help">Hotkeys</button>
+        </div>
+
+        <div class="neoPanel" id="neoMC_RightPanel"></div>
+
+        <div class="neoFooter">
+          <span style="color:rgba(255,255,255,.65); font-size:12px;" id="neoMC_FooterText"></span>
+          <div class="neoSpacer"></div>
+          <button class="neoBtn" id="neoMC_Close2">Close</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  // ---- Info Bar ----
+  const info = document.createElement("div");
+  info.id = "neoInfoBar";
+  info.innerHTML = `<div class="neoInfoPill" id="neoInfoPill"></div>`;
+  document.body.appendChild(info);
+
+  function getToolbarBottom() {
+    const controls = qs("#controls") || qs(".controls") || qs("[id*='control']");
+    if (!controls) return 10;
+    const r = controls.getBoundingClientRect();
+    return Math.round(r.bottom) + 10;
+  }
+
+  function readVar(...names) {
+    for (const n of names) {
+      if (n in window) return window[n];
     }
+    return undefined;
   }
 
-  function tabList({ all, byCat }) {
-    const favs = getFavs().filter(n => window.elements?.[n]);
-    const rec = getRecents().filter(n => window.elements?.[n]);
-    if (currentTab === "fav") return favs;
-    if (currentTab === "recent") return rec;
-    if (currentCat === "all") return all;
-    return byCat.get(currentCat) || [];
+  function renderInfoBar() {
+    if (!settings.infoBar) {
+      info.classList.remove("neo-on");
+      return;
+    }
+    info.classList.add("neo-on");
+    info.style.top = `${getToolbarBottom()}px`;
+
+    const elName = readVar("currentElement","element","selectedElement");
+    const size = readVar("mouseSize","cursorSize","brushSize");
+    const replace = readVar("replaceMode","replace","replacing");
+    const paused = readVar("paused","isPaused","pause");
+    const tps = readVar("tps","TPS","tickSpeed");
+
+    const pill = qs("#neoInfoPill", info);
+    pill.innerHTML = `
+      <span><b>Elem:</b> ${elName ?? "-"}</span>
+      <span><b>Size:</b> ${size ?? "-"}</span>
+      <span><b>Replace:</b> ${(typeof replace === "boolean") ? (replace ? "On" : "Off") : (replace ?? "-")}</span>
+      <span><b>Paused:</b> ${(typeof paused === "boolean") ? (paused ? "Yes" : "No") : (paused ?? "-")}</span>
+      <span><b>TPS:</b> ${tps ?? "-"}</span>
+    `;
   }
 
-  function inCat(def) {
-    if (currentCat === "all") return true;
-    return String(def?.category || "other") === String(currentCat);
-  }
+  setInterval(renderInfoBar, 250);
 
-  function renderElements() {
-    const grid = $("#neo33ElGrid");
-    const count = $("#neo33Count");
-    if (!grid) return;
+  // ---- Settings QoL: scroll + search inside settings screen ----
+  function enhanceSettingsScreen(screen) {
+    if (!screen || screen.__neoSettingsEnhanced) return;
+    screen.__neoSettingsEnhanced = true;
 
-    const query = ($("#neo33Search")?.value || "").trim().toLowerCase();
-    const favSet = new Set(getFavs());
+    // make it scrollable and readable
+    screen.classList.add("neoScrollFix");
 
-    const { all, byCat } = buildIndex();
-    let list = tabList({ all, byCat });
+    // sticky header wrapper (best-effort)
+    const header = document.createElement("div");
+    header.className = "neoStickyTop";
+    header.innerHTML = `
+      <div style="display:flex; gap:10px; align-items:center; padding:10px 0;">
+        <input class="neoInput" id="neoSettingsSearch_${Math.random().toString(16).slice(2)}" placeholder="Search settings..." />
+        <button class="neoBtn" type="button">Clear</button>
+      </div>
+    `;
+    // Insert at top without breaking layout
+    screen.prepend(header);
 
-    list = list.filter(n => {
-      const def = window.elements?.[n];
-      if (!def || def.hidden) return false;
-      return inCat(def);
-    });
+    const input = qs("input.neoInput", header);
+    const clearBtn = qs("button.neoBtn", header);
 
-    if (query) {
-      list = list.filter(n => {
-        const disp = prettyName(n).toLowerCase();
-        return disp.includes(query) || String(n).toLowerCase().includes(query);
+    function allSettingsButtons() {
+      // grab likely clickable controls inside settings menu
+      return qsa("button, input, select, a", screen)
+        .filter(el => el !== input && el !== clearBtn && !header.contains(el));
+    }
+
+    function doFilter() {
+      const q = (input.value || "").trim().toLowerCase();
+      const els = allSettingsButtons();
+      if (!q) {
+        els.forEach(el => (el.style.display = ""));
+        return;
+      }
+      els.forEach(el => {
+        const t = (el.getAttribute("aria-label") || el.title || safeText(el) || "").toLowerCase();
+        el.style.display = t.includes(q) ? "" : "none";
       });
     }
 
-    grid.innerHTML = "";
-    let shown = 0;
-
-    for (const name of list) {
-      const def = window.elements?.[name];
-      if (!def || def.hidden) continue;
-
-      const btn = el("button", { class: "neo33ElBtn" });
-      btn.appendChild(el("span", { class: "neo33Dot", style: `background:${elementColor(name)};` }));
-      btn.appendChild(el("span", { class: "neo33Name" }, prettyName(name)));
-      if (favSet.has(name)) btn.appendChild(el("span", { class: "neo33Star" }, "★"));
-
-      btn.onclick = () => {
-        if (typeof window.selectElement === "function") window.selectElement(name);
-        // recents
-        const r = getRecents();
-        setRecents([name, ...r.filter(x => x !== name)], 24);
-        toast(`Selected: ${prettyName(name)}`);
-        if (loadSettings().autoCloseOnPick) setOpenElements(false);
-      };
-
-      btn.oncontextmenu = (ev) => {
-        ev.preventDefault();
-        const favs = getFavs();
-        const i = favs.indexOf(name);
-        if (i >= 0) favs.splice(i, 1); else favs.unshift(name);
-        setFavs(favs);
-        renderElements();
-      };
-
-      grid.appendChild(btn);
-      shown++;
-    }
-
-    if (count) count.textContent = `${shown} shown • right-click = favorite`;
-
-    // make sure preview doesn't steal height when broken
-    const prev = $("#neo33Preview");
-    if (prev) {
-      prev.classList.toggle("show", !!loadSettings().showPreview);
-      if (!shown) prev.innerHTML = `<div class="muted">No elements match.</div>`;
-    }
+    on(input, "input", doFilter);
+    on(clearBtn, "click", () => { input.value = ""; doFilter(); });
   }
 
-  // ---------- Overhaul panel
-  function buildOverhaulPanel() {
-    const body = $("#neo33OverBody");
-    if (!body) return;
-    body.innerHTML = "";
-
-    const s = loadSettings();
-
-    const section = (t) => el("div", { class: "neo33Section" }, t);
-    const toggle = (key, title, desc) => {
-      const id = `neo33_${key}`;
-      return el("label", { class: "neo33Toggle", for: id },
-        el("input", {
-          id, type: "checkbox",
-          checked: s[key] ? "checked" : null,
-          onchange: (ev) => {
-            const next = loadSettings();
-            next[key] = !!ev.target.checked;
-            saveSettings(next);
-            liveApply();
-          }
-        }),
-        el("div", {}, el("div", { style: "font-weight:800;" }, title), el("div", { class: "neo33Small" }, desc))
-      );
-    };
-
-    body.append(
-      section("UI Size"),
-      el("div", { class: "neo33Toggle", style: "cursor:default;" },
-        el("div", { style: "min-width:18px;" }),
-        el("div", { style: "width:100%;" },
-          el("div", { style: "font-weight:800;" }, `UI scale: ${getUiScale().toFixed(2)}`),
-          el("div", { class: "neo33Small" }, "Bigger text/buttons without breaking layout"),
-          el("div", { style: "display:flex; gap:10px; align-items:center; margin-top:10px;" },
-            el("button", { class: "neo33Btn", onclick: () => setUiScale(getUiScale() - 0.06) }, "–"),
-            el("input", {
-              type: "range", min: "1.0", max: "1.65", step: "0.02",
-              value: String(getUiScale()), style: "flex:1;",
-              oninput: (ev) => setUiScale(parseFloat(ev.target.value))
-            }),
-            el("button", { class: "neo33Btn", onclick: () => setUiScale(getUiScale() + 0.06) }, "+"),
-          )
-        )
-      ),
-
-      section("UI"),
-      toggle("restyleTopUI", "New style top bar", "Same vibe as the new UI"),
-      toggle("hideVanillaElementUI", "Hide vanilla element rows", "Use the drawer instead"),
-      toggle("openElementsOnStart", "Open elements on start", "Opens the drawer after refresh"),
-      toggle("autoCloseOnPick", "Auto-close on pick", "Closes drawer after selecting"),
-
-      section("Panic"),
-      el("button", {
-        class: "neo33Btn",
-        onclick: () => panicReset()
-      }, "Reset UI layout (panic)")
-    );
-  }
-
-  function liveApply() {
-    const s = loadSettings();
-    document.body.classList.toggle("neo-topstyle", !!s.restyleTopUI);
-    document.body.classList.toggle("neo-hide-vanilla", !!s.hideVanillaElementUI);
-
-    if (localStorage.getItem(MOD.keys.compact) == null) localStorage.setItem(MOD.keys.compact, s.compactView ? "1" : "0");
-    if (localStorage.getItem(MOD.keys.hideCats) == null) localStorage.setItem(MOD.keys.hideCats, s.hideCategories ? "1" : "0");
-    if (localStorage.getItem(MOD.keys.uiScale) == null) localStorage.setItem(MOD.keys.uiScale, String(s.uiScale));
-
-    document.body.style.setProperty("--neo-ui-scale", String(getUiScale()));
-    applyViewFlags();
-    buildOverhaulPanel();
-    safeUpdateTopOffset();
-    updateLayout();
-    renderCats();
-    renderElements();
-    enhanceModsUI();
-  }
-
-  // ---------- Mods UI (safe injection)
-  function findModRoot() {
-    return $("#modManager") || $("#modManagerScreen") || $("#modMenu") || $("#modMenuScreen");
-  }
-
-  function findModRows(root) {
-    if (!root) return [];
-    const checks = $$('input[type="checkbox"]', root);
-    const rows = new Set();
-    for (const cb of checks) {
-      const row = cb.closest("div, li, tr") || cb.parentElement;
-      if (row && row.textContent && row.textContent.trim()) rows.add(row);
-    }
-    return Array.from(rows).filter(x => x instanceof HTMLElement);
-  }
-
-  function enhanceModsUI() {
-    const root = findModRoot();
-    if (!root) return;
-    if ($("#neo33ModTools", root)) return;
-
-    const bar = el("div", { id: "neo33ModTools" },
-      el("input", { id: "neo33ModSearch", type: "text", placeholder: "Search mods… (name, url, tag)" }),
-      el("button", { class: "neo33MiniBtn", onclick: () => setUiScale(getUiScale() + 0.06) }, "UI +"),
-      el("button", { class: "neo33MiniBtn", onclick: () => setUiScale(getUiScale() - 0.06) }, "UI −"),
-      el("button", { class: "neo33MiniBtn", onclick: () => { const i = $("#neo33ModSearch", root); i.value = ""; i.dispatchEvent(new Event("input")); } }, "Clear"),
-    );
-
-    root.prepend(bar);
-
-    const input = $("#neo33ModSearch", root);
-    input.addEventListener("input", () => {
-      const q = input.value.trim().toLowerCase();
-      const rows = findModRows(root);
-      for (const r of rows) {
-        const t = (r.textContent || "").toLowerCase();
-        r.style.display = (!q || t.includes(q)) ? "" : "none";
+  function detectSettingsOpen() {
+    // best-effort: look for a big menu/prompt containing "Settings" + common setting words
+    const candidates = qsa("div, section").filter(el => el && el.offsetParent !== null);
+    for (const el of candidates) {
+      const t = safeText(el);
+      if (!t) continue;
+      if (t.includes("Settings") && (t.includes("Language") || t.includes("Background") || t.includes("Canvas Size"))) {
+        enhanceSettingsScreen(el);
+        return;
       }
+    }
+  }
+
+  // ---- Mod Center logic ----
+  let activeTab = "installed";
+  let searchQuery = "";
+
+  function openModCenter() {
+    closeOtherPanels();
+    overlay.classList.add("neo-open");
+    renderAll();
+    // focus search
+    const s = qs("#neoMC_Search", overlay);
+    s && s.focus();
+  }
+
+  function closeModCenter() {
+    overlay.classList.remove("neo-open");
+  }
+
+  function setTab(tab) {
+    activeTab = tab;
+    qsa(".neoTab", overlay).forEach(t => t.classList.toggle("neoActive", t.dataset.tab === tab));
+    renderAll();
+  }
+
+  function normalizeInputMods(str) {
+    // supports semicolon-separated input :contentReference[oaicite:2]{index=2}
+    return String(str || "")
+      .split(";")
+      .map(s => s.trim())
+      .filter(Boolean);
+  }
+
+  function renderInstalled(panel) {
+    const mods = readEnabledMods();
+    const loaded = loadedModsSet();
+
+    const q = searchQuery.trim().toLowerCase();
+    const filtered = q
+      ? mods.filter(m => m.toLowerCase().includes(q))
+      : mods;
+
+    const count = mods.length;
+    const countFiltered = filtered.length;
+
+    qs("#neoMC_RightTitle", overlay).textContent = "Installed Mods";
+    qs("#neoMC_RightSub", overlay).textContent =
+      q ? `Showing ${countFiltered}/${count} mods` : `${count} mods enabled`;
+
+    if (!filtered.length) {
+      panel.innerHTML = `
+        <div class="neoCard">
+          <h3>No mods found</h3>
+          <p>${mods.length ? "Try a different search." : "Add a mod in the Add tab."}</p>
+        </div>
+      `;
+      return;
+    }
+
+    panel.innerHTML = "";
+    filtered.forEach((m, idx) => {
+      const isLoaded = loaded.has(m) || loaded.has(m.split("/").pop() || m);
+      const row = document.createElement("div");
+      row.className = "neoModItem";
+      row.innerHTML = `
+        <div class="neoGrow neoModName">
+          <b title="${m.replace(/"/g, "&quot;")}">${m}</b>
+          <span>${m.startsWith("http") ? "URL mod" : "File mod"}</span>
+        </div>
+        <span class="neoBadge ${isLoaded ? "neoOk" : "neoWarn"}">${isLoaded ? "Loaded" : "Reload needed"}</span>
+        <button class="neoBtn" data-act="copy" data-mod="${m.replace(/"/g, "&quot;")}">Copy</button>
+        <button class="neoBtn neoDanger" data-act="remove" data-mod="${m.replace(/"/g, "&quot;")}">Remove</button>
+      `;
+      panel.appendChild(row);
+    });
+
+    // actions
+    qsa("button[data-act]", panel).forEach(btn => {
+      on(btn, "click", () => {
+        const act = btn.dataset.act;
+        const mod = btn.dataset.mod || "";
+        if (!mod) return;
+
+        if (act === "copy") {
+          navigator.clipboard?.writeText(mod).catch(() => {});
+        }
+        if (act === "remove") {
+          const cur = readEnabledMods().filter(x => x !== mod);
+          writeEnabledMods(cur);
+          renderAll();
+        }
+      });
     });
   }
 
-  function watchMods() {
-    setInterval(() => enhanceModsUI(), 900);
+  function renderAdd(panel) {
+    qs("#neoMC_RightTitle", overlay).textContent = "Add Mods";
+    qs("#neoMC_RightSub", overlay).textContent = "Paste filenames or URLs (use ; for multiple)";
+
+    panel.innerHTML = `
+      <div class="neoCard">
+        <h3>Add one or more mods</h3>
+        <p>Examples: <span style="color:rgba(255,255,255,.9)">chem.js</span> or <span style="color:rgba(255,255,255,.9)">https://.../mod.js</span></p>
+        <textarea class="neoInput" id="neoMC_AddBox" rows="6" style="resize:vertical; min-height:120px;" placeholder="mods separated by ;"></textarea>
+        <div class="neoRow" style="margin-top:10px; flex-wrap:wrap;">
+          <button class="neoBtn neoPrimary" id="neoMC_AddBtn">Add</button>
+          <button class="neoBtn neoPrimary" id="neoMC_AddReloadBtn">Add + Reload</button>
+          <button class="neoBtn" id="neoMC_ClearAdd">Clear</button>
+        </div>
+      </div>
+
+      <div class="neoCard">
+        <h3>Tip</h3>
+        <p>If a mod still doesn’t show as “Loaded”, hit Reload. Some mods only register after refresh.</p>
+      </div>
+    `;
+
+    const box = qs("#neoMC_AddBox", panel);
+    const add = qs("#neoMC_AddBtn", panel);
+    const addReload = qs("#neoMC_AddReloadBtn", panel);
+    const clear = qs("#neoMC_ClearAdd", panel);
+
+    const doAdd = (reload) => {
+      const incoming = normalizeInputMods(box.value);
+      const valid = incoming.filter(looksLikeModString);
+
+      const cur = readEnabledMods();
+      const merged = Array.from(new Set(cur.concat(valid)));
+
+      writeEnabledMods(merged);
+      box.value = valid.length ? valid.join("; ") : box.value;
+      renderAll();
+
+      if (reload) location.reload();
+    };
+
+    on(add, "click", () => doAdd(false));
+    on(addReload, "click", () => doAdd(true));
+    on(clear, "click", () => (box.value = ""));
   }
 
-  // ---------- PANIC RESET (fixes your “broken / too short / unclickable” state instantly)
-  function panicReset() {
-    localStorage.setItem(MOD.keys.uiScale, "1.30");
-    localStorage.setItem(MOD.keys.widthElements, "520");
-    localStorage.setItem(MOD.keys.widthOverhaul, "520");
-    localStorage.setItem(MOD.keys.maxElements, "0");
-    localStorage.setItem(MOD.keys.maxOverhaul, "0");
-    localStorage.setItem(MOD.keys.openElements, "1");
-    localStorage.setItem(MOD.keys.openOverhaul, "0");
-    localStorage.setItem(MOD.keys.hideCats, "0");
-    localStorage.setItem(MOD.keys.compact, "1");
+  function renderTools(panel) {
+    qs("#neoMC_RightTitle", overlay).textContent = "Tools";
+    qs("#neoMC_RightSub", overlay).textContent = "Backup, restore, and sanity controls";
 
-    document.body.style.setProperty("--neo-ui-scale", "1.30");
-    $("#neo33Elements")?.classList.add("open");
-    $("#neo33Overhaul")?.classList.remove("open");
-    $("#neo33Elements")?.classList.remove("max");
-    $("#neo33Overhaul")?.classList.remove("max");
+    const mods = readEnabledMods();
+    const storageKey = guessModsKey() || "(unknown yet)";
 
-    applyViewFlags();
-    safeUpdateTopOffset();
-    updateLayout();
-    renderCats();
-    renderElements();
-    toast("UI reset");
+    panel.innerHTML = `
+      <div class="neoCard">
+        <h3>Storage</h3>
+        <p>Mods key: <span style="color:rgba(255,255,255,.9)">${storageKey}</span></p>
+        <p>Enabled mods: <span style="color:rgba(255,255,255,.9)">${mods.length}</span></p>
+      </div>
+
+      <div class="neoCard">
+        <h3>Export / Import</h3>
+        <p>Export copies a ; separated list you can paste back later.</p>
+        <div class="neoRow" style="flex-wrap:wrap; margin-top:10px;">
+          <button class="neoBtn" id="neoMC_Export">Copy export</button>
+          <button class="neoBtn" id="neoMC_Import">Import from clipboard</button>
+        </div>
+      </div>
+
+      <div class="neoCard">
+        <h3>Danger zone</h3>
+        <div class="neoRow" style="flex-wrap:wrap; margin-top:10px;">
+          <button class="neoBtn neoDanger" id="neoMC_ClearAll">Disable all mods</button>
+          <button class="neoBtn neoPrimary" id="neoMC_Reload2">Reload</button>
+        </div>
+        <p style="margin-top:8px;">Disable all = clears enabled list, then you should Reload.</p>
+      </div>
+    `;
+
+    on(qs("#neoMC_Export", panel), "click", () => {
+      const list = readEnabledMods().join("; ");
+      navigator.clipboard?.writeText(list).catch(() => {});
+    });
+
+    on(qs("#neoMC_Import", panel), "click", async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        const incoming = normalizeInputMods(text).filter(looksLikeModString);
+        if (!incoming.length) return;
+        writeEnabledMods(incoming);
+        renderAll();
+      } catch {}
+    });
+
+    on(qs("#neoMC_ClearAll", panel), "click", () => {
+      writeEnabledMods([]);
+      renderAll();
+    });
+
+    on(qs("#neoMC_Reload2", panel), "click", () => location.reload());
   }
 
-  // ---------- hotkeys
-  function installHotkeys() {
-    window.addEventListener("keydown", (ev) => {
-      if (!loadSettings().hotkeys) return;
-      const a = document.activeElement;
-      const typing = a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA");
+  function renderAll() {
+    // left controls
+    qs("#neoMC_InfoToggle", overlay).checked = !!settings.infoBar;
+    qs("#neoMC_FooterText", overlay).textContent = `Tip: Ctrl+M opens Mod Center • Esc closes`;
 
-      if (!typing && ev.key.toLowerCase() === "b") { ev.preventDefault(); setOpenElements(!isOpenElements()); }
-      if (!typing && ev.key.toLowerCase() === "o") { ev.preventDefault(); setOpenOverhaul(!isOpenOverhaul()); }
+    // right panel render
+    const right = qs("#neoMC_RightPanel", overlay);
+    if (!right) return;
 
-      if (!typing && ev.key === "/") {
-        ev.preventDefault();
-        setOpenElements(true);
-        $("#neo33Search")?.focus();
-        $("#neo33Search")?.select();
-      }
-
-      // PANIC: Ctrl+0
-      if ((ev.ctrlKey || ev.metaKey) && ev.key === "0") {
-        ev.preventDefault();
-        panicReset();
-      }
-    }, { passive: false });
+    if (activeTab === "installed") renderInstalled(right);
+    if (activeTab === "add") renderAdd(right);
+    if (activeTab === "tools") renderTools(right);
   }
 
-  // ---------- boot
-  onGameReady(async () => {
-    cleanupOld();
+  // ---- Wire overlay controls ----
+  on(qs("#neoMC_Close", overlay), "click", closeModCenter);
+  on(qs("#neoMC_Close2", overlay), "click", closeModCenter);
 
-    // wait for game UI + elements to exist (IMPORTANT so grid isn't empty)
-    try { await waitFor(() => $("#controls") && $("#toolControls")); } catch {}
-    try { await waitFor(() => window.elements && Object.keys(window.elements).length > 20); } catch {}
-
-    if (localStorage.getItem(MOD.keys.uiScale) == null) localStorage.setItem(MOD.keys.uiScale, String(loadSettings().uiScale));
-    if (localStorage.getItem(MOD.keys.openElements) == null) localStorage.setItem(MOD.keys.openElements, loadSettings().openElementsOnStart ? "1" : "0");
-    if (localStorage.getItem(MOD.keys.openOverhaul) == null) localStorage.setItem(MOD.keys.openOverhaul, "0");
-    if (localStorage.getItem(MOD.keys.widthElements) == null) localStorage.setItem(MOD.keys.widthElements, "520");
-    if (localStorage.getItem(MOD.keys.widthOverhaul) == null) localStorage.setItem(MOD.keys.widthOverhaul, "520");
-    if (localStorage.getItem(MOD.keys.maxElements) == null) localStorage.setItem(MOD.keys.maxElements, "0");
-    if (localStorage.getItem(MOD.keys.maxOverhaul) == null) localStorage.setItem(MOD.keys.maxOverhaul, "0");
-    if (localStorage.getItem(MOD.keys.compact) == null) localStorage.setItem(MOD.keys.compact, loadSettings().compactView ? "1" : "0");
-    if (localStorage.getItem(MOD.keys.hideCats) == null) localStorage.setItem(MOD.keys.hideCats, loadSettings().hideCategories ? "1" : "0");
-
-    injectCss("neo33Style", cssNeo());
-
-    document.body.classList.add("sbx-neo33");
-    document.body.style.setProperty("--neo-ui-scale", String(getUiScale()));
-
-    ensureUI();
-    addTopButtons();
-
-    document.body.classList.toggle("neo-topstyle", !!loadSettings().restyleTopUI);
-    document.body.classList.toggle("neo-hide-vanilla", !!loadSettings().hideVanillaElementUI);
-
-    applyViewFlags();
-
-    $("#neo33Elements")?.classList.toggle("open", isOpenElements());
-    $("#neo33Overhaul")?.classList.toggle("open", isOpenOverhaul());
-    $("#neo33Elements")?.classList.toggle("max", isMax("elements"));
-    $("#neo33Overhaul")?.classList.toggle("max", isMax("overhaul"));
-
-    buildOverhaulPanel();
-    safeUpdateTopOffset();
-    updateLayout();
-
-    renderCats();
-    setTab(currentTab);
-    renderElements();
-
-    // keep top offset stable even when UI changes
-    window.addEventListener("resize", () => { safeUpdateTopOffset(); updateLayout(); });
-    setInterval(() => { safeUpdateTopOffset(); updateLayout(); }, 900);
-
-    installHotkeys();
-    watchMods();
-    enhanceModsUI();
-
-    toast(`${MOD.name} v${MOD.version} loaded`);
+  on(overlay, "click", (e) => {
+    if (e.target === overlay) closeModCenter();
   });
 
+  on(document, "keydown", (e) => {
+    if (e.key === "Escape" && overlay.classList.contains("neo-open")) {
+      e.preventDefault();
+      closeModCenter();
+      return;
+    }
+    // Ctrl+M / Cmd+M open
+    const isMac = navigator.platform.toLowerCase().includes("mac");
+    if ((isMac ? e.metaKey : e.ctrlKey) && e.key.toLowerCase() === "m") {
+      e.preventDefault();
+      openModCenter();
+    }
+  });
+
+  on(qs("#neoMC_Tabs", overlay), "click", (e) => {
+    const tab = e.target && e.target.dataset && e.target.dataset.tab;
+    if (tab) setTab(tab);
+  });
+
+  on(qs("#neoMC_Search", overlay), "input", (e) => {
+    searchQuery = e.target.value || "";
+    if (activeTab !== "installed") setTab("installed");
+    else renderAll();
+  });
+
+  on(qs("#neoMC_Reload", overlay), "click", () => location.reload());
+  on(qs("#neoMC_CopyAll", overlay), "click", () => {
+    const list = readEnabledMods().join("; ");
+    navigator.clipboard?.writeText(list).catch(() => {});
+  });
+  on(qs("#neoMC_RemoveAll", overlay), "click", () => {
+    writeEnabledMods([]);
+    renderAll();
+  });
+
+  on(qs("#neoMC_OpenList", overlay), "click", () => {
+    window.open("https://sandboxels.r74n.com/mod-list", "_blank");
+  });
+
+  on(qs("#neoMC_Help", overlay), "click", () => {
+    alert("Hotkeys:\n- Ctrl+M / Cmd+M: open Mod Center\n- Esc: close\n\nTip: After adding/removing mods, Reload to apply.");
+  });
+
+  on(qs("#neoMC_InfoToggle", overlay), "change", (e) => {
+    settings.infoBar = !!e.target.checked;
+    localStorage.setItem(STORE.keyInfoBar, settings.infoBar ? "1" : "0");
+    renderInfoBar();
+  });
+
+  on(qs("#neoMC_Bigger", overlay), "click", () => {
+    settings.scale = clamp(settings.scale + 0.05, 0.85, 1.35);
+    localStorage.setItem(STORE.keyScale, String(settings.scale));
+    applyScale();
+    renderAll();
+  });
+  on(qs("#neoMC_Smaller", overlay), "click", () => {
+    settings.scale = clamp(settings.scale - 0.05, 0.85, 1.35);
+    localStorage.setItem(STORE.keyScale, String(settings.scale));
+    applyScale();
+    renderAll();
+  });
+
+  // ---- Intercept native Mods button (so you don't get the glitchy screen) ----
+  function wireModsButton() {
+    // try common toolbar containers first
+    const roots = [
+      qs("#controls"),
+      qs("#toolControls"),
+      document.body
+    ].filter(Boolean);
+
+    let btn = null;
+    for (const root of roots) {
+      const candidates = qsa("button, a, div", root);
+      btn = candidates.find(el => safeText(el) === "Mods" || (el.title && el.title.toLowerCase().includes("mod")));
+      if (btn) break;
+    }
+    if (!btn || btn.__neoWiredMods) return;
+    btn.__neoWiredMods = true;
+
+    on(btn, "click", (e) => {
+      // stop vanilla screen
+      e.preventDefault();
+      e.stopPropagation();
+      openModCenter();
+    }, true);
+  }
+
+  // ---- If vanilla mod screen still appears, replace it (best-effort) ----
+  function autoReplaceVanillaModScreen() {
+    const nodes = qsa("div, section").filter(el => el && el.offsetParent !== null);
+    for (const el of nodes) {
+      const t = safeText(el);
+      if (!t) continue;
+      if (t.includes("Enabled Mods") && t.includes("Reload to apply changes")) {
+        // hide vanilla and show ours
+        el.style.display = "none";
+        openModCenter();
+        return;
+      }
+    }
+  }
+
+  // keep wiring (Sandboxels rebuilds UI sometimes)
+  setInterval(() => {
+    wireModsButton();
+    detectSettingsOpen();
+    autoReplaceVanillaModScreen();
+  }, 600);
+
+  // expose for other parts of your overhaul
+  NEO.openModCenter = openModCenter;
 })();
