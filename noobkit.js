@@ -1,12 +1,3 @@
-// noobkit.js v13 - Fire burns into gore/clots (not ash), organs break down, poop + pee works better
-// IDs are pg_*
-//
-// FIXES in v13:
-// - Organs/tissues now have tempHigh melt (so fire destroys internals too)
-// - Burning makes pg_burnt_gore + some blood/clots (low spawn, no pixel explosion)
-// - Intestine wall peristalsis pushes feces/waste water down/out
-// - Adds pg_urine + pg_kidney_block + pg_bladder_wall + bladder drain hole in seed
-
 (function(main){
   if (typeof runAfterLoad === "function") runAfterLoad(main);
   else if (document.readyState === "complete") main();
@@ -19,7 +10,6 @@
     }
     console.log("[pg_noobkit] loaded v13");
 
-    // ---------------- helpers ----------------
     function inBounds(x,y){ return !(typeof outOfBounds === "function" && outOfBounds(x,y)); }
     function empty(x,y){ return inBounds(x,y) && (typeof isEmpty === "function" ? isEmpty(x,y) : true); }
     function getPixel(x,y){
@@ -49,8 +39,6 @@
 
     const CAT = "anatomy";
     const STEAM = elements.steam ? "steam" : null;
-
-    // ---------------- proof marker ----------------
     elements.pg_loaded_marker = {
       color: "#ff00ff",
       behavior: behaviors.WALL,
@@ -58,8 +46,6 @@
       state: "solid",
       density: 9999,
     };
-
-    // ---------------- blood ----------------
     const BLOOD = elements.blood ? "blood" : "pg_blood";
     if (!elements[BLOOD]) {
       elements.pg_blood = {
@@ -74,8 +60,6 @@
         stateHigh: STEAM || "steam",
       };
     }
-
-    // ---------------- clot ----------------
     elements.pg_clot = {
       color: ["#4a0a10","#5f0c14","#3b070c"],
       behavior: behaviors.STURDYPOWDER,
@@ -84,8 +68,6 @@
       density: 1400,
       stain: 0.18,
     };
-
-    // ---------------- bleeding helper ----------------
     function bleedTick(pixel, strength){
       pixel._pgBleedAge = (pixel._pgBleedAge||0)+1;
       if (pixel._pgBleedAge > 260) return;
@@ -97,7 +79,6 @@
       if (empty(nx,ny)) safeCreate(BLOOD, nx, ny);
     }
 
-    // ---------------- burned gore (looks realistic, 1:1 conversion) ----------------
     elements.pg_burnt_gore = {
       color: ["#1b0b0b","#2a0f0f","#3b1414","#120707"],
       behavior: behaviors.LIQUID,
@@ -109,21 +90,19 @@
       tick: function(pixel){
         pixel._age = (pixel._age||0)+1;
 
-        // VERY LOW extra pixels: tiny blood seep
+
         if (chance(0.003)) {
           const nx = pixel.x + (chance(0.5)?-1:1);
           const ny = pixel.y + 1;
           if (empty(nx,ny)) safeCreate(BLOOD, nx, ny);
         }
 
-        // sometimes solidify into clot (still 1:1)
         if (pixel._age > 500 && chance(0.02) && pixel.temp < 70) {
           safeChange(pixel, "pg_clot");
         }
       }
     };
 
-    // ---------------- other fluids ----------------
     elements.pg_saliva = {
       color: ["#e7f6ff","#d7efff"],
       behavior: behaviors.LIQUID,
@@ -253,7 +232,6 @@
       }
     };
 
-    // ---------------- materials: bone/cartilage/veins ----------------
     elements.pg_bone_block = {
       color: ["#eee5d2","#e0d4bc","#f6eedb"],
       behavior: behaviors.WALL,
@@ -306,7 +284,7 @@
       burn: 2, burnTime: 90, burnInto: "pg_burnt_gore",
       tempHigh: 220, stateHigh: "pg_burnt_gore",
       tick: function(pixel){
-        // tiny leak (low so no pixel spam)
+    
         if (!chance(0.006)) return;
         const dirs = [[0,1],[1,0],[-1,0],[0,-1]];
         const d = dirs[(Math.random()*dirs.length)|0];
@@ -326,7 +304,6 @@
       tick: function(pixel){ bleedTick(pixel, 0.05); }
     };
 
-    // ---------------- tissues + organs (block + chunk) ----------------
     function makeBlockAndChunk(baseId, blockDef, chunkDef, bleedStrength){
       elements[baseId+"_block"] = Object.assign({
         behavior: behaviors.WALL,
@@ -342,10 +319,6 @@
         tick: bleedStrength ? function(pixel){ bleedTick(pixel, bleedStrength); } : undefined,
       }, chunkDef);
     }
-
-    // "on fire" realism without pixel spam:
-    // - 1:1 burnInto = pg_burnt_gore
-    // - very small blood/clot spawn when hot
     function hotBleed(pixel) {
       // only when very hot (fire touching)
       if (pixel.temp > 160 && chance(0.004)) {
@@ -358,7 +331,6 @@
         if (empty(nx,ny)) safeCreate("pg_clot", nx, ny);
       }
     }
-
     makeBlockAndChunk("pg_skin",
       {
         color:["#f2c6a7","#e8b996","#d9a785"],
@@ -376,7 +348,6 @@
       },
       null
     );
-
     makeBlockAndChunk("pg_muscle",
       {
         color:["#b54545","#c85a5a","#9c2f2f"],
@@ -507,8 +478,6 @@
       },
       0.015
     );
-
-    // ---------------- esophagus conveyor ----------------
     elements.pg_esophagus_belt = {
       color: ["#b77a6d","#c98a7c","#a86a5d"],
       behavior: behaviors.WALL,
@@ -536,8 +505,6 @@
         }
       }
     };
-
-    // ---------------- mouth ----------------
     elements.pg_mouth_block = {
       color: ["#f0a0b2","#e98ea0","#d97a8b"],
       behavior: behaviors.WALL,
@@ -556,8 +523,6 @@
             if (empty(nx,ny)) { safeCreate("pg_saliva",nx,ny); break; }
           }
         }
-
-        // chew solids -> bolus
         if (!chance(0.20)) return;
         const targets=[[0,-1],[1,-1],[-1,-1],[0,1]];
         const t=targets[(Math.random()*targets.length)|0];
@@ -585,7 +550,6 @@
       burn: 3, burnTime: 110, burnInto: "pg_burnt_gore",
       tempHigh: 240, stateHigh: "pg_burnt_gore",
       tick: function(pixel){
-        // keep a little acid around
         let acid=0;
         for (let dy=-3; dy<=3; dy++){
           for (let dx=-3; dx<=3; dx++){
@@ -612,7 +576,6 @@
       tick: function(pixel){ bleedTick(pixel, 0.015); hotBleed(pixel); }
     };
 
-    // Intestines: process + PUSH DOWN (poop actually exits)
     elements.pg_intestine_wall = {
       color: ["#caa07b","#d5b08b","#b88962"],
       behavior: behaviors.WALL,
@@ -631,7 +594,6 @@
             const d = around[(Math.random()*around.length)|0];
             const p = getPixel(pixel.x+d[0], pixel.y+d[1]);
             if (p && (p.element === "pg_feces" || p.element === "pg_waste_water" || p.element === "pg_chyme")) {
-              // try down first, then down-diagonal
               if (!tryMove(p, p.x, p.y+1)) {
                 tryMove(p, p.x + (chance(0.5)?-1:1), p.y+1);
               }
@@ -639,7 +601,6 @@
           }
         }
 
-        // convert chyme -> feces or waste water
         if (!chance(0.22)) return;
         const dirs=[[0,1],[1,0],[-1,0],[0,-1]];
         const d=dirs[(Math.random()*dirs.length)|0];
@@ -699,7 +660,6 @@
       tick: function(pixel){ bleedTick(pixel,0.012); hotBleed(pixel); }
     };
 
-    // Bladder wall just holds urine
     elements.pg_bladder_wall = {
       color: ["#d7b1a8","#cfa39a","#e3c1ba"],
       behavior: behaviors.WALL,
@@ -722,8 +682,6 @@
       tempHigh: 230, stateHigh: "pg_burnt_gore",
       tick: function(pixel){ bleedTick(pixel,0.01); hotBleed(pixel); }
     };
-
-    // ---------------- stomach acid (same idea as your v12 request) ----------------
     elements.pg_diluted_acid = {
       color: ["#dfff80","#cfff6a","#e9ffb0"],
       behavior: behaviors.LIQUID,
@@ -776,8 +734,6 @@
           if (chance(0.25)) safeChange(pixel, "pg_diluted_acid");
           return;
         }
-
-        // gunpowder reaction
         if (e === "gunpowder" || e === "gunpowder_dust") {
           if (elements.explosion && chance(0.30)) safeChange(p, "explosion");
           else if (elements.fire) safeChange(p, "fire");
@@ -790,35 +746,25 @@
         const ed = elements[e];
         if (!ed) return;
         if (ed.state === "gas") return;
-
-        // liquids (including WATER) -> diluted acid
         if (ed.state === "liquid") {
           safeChange(p, "pg_diluted_acid");
           if (chance(0.35)) safeChange(pixel, "pg_diluted_acid");
           return;
         }
-
-        // brain special
         if (e === "pg_brain_block" || e === "pg_brain_chunk") {
           if (chance(0.30) && empty(p.x, p.y-1)) safeCreate(BLOOD, p.x, p.y-1);
           if (chance(0.40)) safeCreate("pg_brain_fluid", p.x + (chance(0.5)?-1:1), p.y);
           safeChange(p, "pg_brain_mush");
           return;
         }
-
-        // pg stuff -> chyme/burnt gore (1:1)
         if (e.startsWith("pg_")) {
           safeChange(p, chance(0.80) ? "pg_chyme" : "pg_burnt_gore");
           return;
         }
-
-        // generic solids -> chyme
         const hard = (ed.hardness || 0) > 0.6;
         if (chance(hard ? 0.20 : 0.55)) safeChange(p, "pg_chyme");
       }
     };
-
-    // ---------------- tools ----------------
     elements.pg_scalpel = {
       color: "#d9d9d9",
       category: "tools",
@@ -847,8 +793,6 @@
         }
       }
     };
-
-    // ---------------- BIG HUMAN SEED (now with kidneys+bladder drain) ----------------
     function fillRect(x1,y1,x2,y2, elem){
       const xa=Math.min(x1,x2), xb=Math.max(x1,x2), ya=Math.min(y1,y2), yb=Math.max(y1,y2);
       for (let y=ya;y<=yb;y++) for (let x=xa;x<=xb;x++) if (empty(x,y)) safeCreate(elem,x,y);
@@ -889,8 +833,6 @@
 
       outlineRect(cx-(headR-1), headY-(headR-1), cx+(headR-1), headY+(headR-1), "pg_bone_block");
       fillRect(cx-2, headY-2, cx+2, headY+1, "pg_brain_block");
-
-      // mouth + throat shaft
       const mouthY = headY + headR;
       const stEntryY = torsoTop + 6;
       carveRect(cx, mouthY, cx, stEntryY);
@@ -941,23 +883,15 @@
       carveRect(inL+1, inT+1, inR-1, inB-2);
       carveRect(stL+2, stB, stR-2, stB);
       carveRect(cx-1, inT, cx+1, inT);
-
-      // poop exit hole (anus)
       carveRect(cx, inB, cx, inB+2);
-
-      // esophagus track to stomach
       const beltY = stEntryY;
       const trackY = stEntryY - 1;
       carveRect(stL+1, trackY, cx, trackY);
       for (let x=cx; x>=stL+4; x--) if (empty(x, beltY)) safeCreate("pg_esophagus_belt", x, beltY);
       carveRect(stL+2, beltY, stL+3, beltY);
       carveRect(stL+2, trackY, stL+3, trackY);
-
-      // kidneys (left+right)
       setOrChange(cx-4, torsoTop+10, "pg_kidney_block");
       setOrChange(cx+4, torsoTop+10, "pg_kidney_block");
-
-      // bladder (small cavity near bottom center) + pee exit hole
       const blL = cx-2, blR = cx+2, blT = torsoBot-4, blB = torsoBot-1;
       outlineRect(blL, blT, blR, blB, "pg_bladder_wall");
       carveRect(blL+1, blT+1, blR-1, blB-1);      // hollow bladder
