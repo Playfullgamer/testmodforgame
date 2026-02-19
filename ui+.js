@@ -1,943 +1,823 @@
-// Neo Mod Center + Settings QoL + Info Bar (no overlap)
-// Drop-in mod file for Sandboxels
+// ui+.js — Neo Mod Center v1.2
+// Fixes: auto-open bug, black screen after close, adds enable/disable toggles (library)
+// Hotkeys: Ctrl+Shift+M (or Cmd+Shift+M on Mac) opens; Esc closes
+
 (() => {
   "use strict";
 
-  // ---- tiny helpers ----
   const qs = (s, r = document) => r.querySelector(s);
   const qsa = (s, r = document) => Array.from(r.querySelectorAll(s));
+  const on = (el, ev, fn, opt) => el && el.addEventListener(ev, fn, opt);
   const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
   const safeText = (el) => (el && (el.textContent || "")).trim();
-  const on = (el, ev, fn, opt) => el && el.addEventListener(ev, fn, opt);
-  const cssEscape = (s) => (window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/[^a-zA-Z0-9_-]/g, "\\$&"));
 
   const NEO = (window.NEOUI = window.NEOUI || {});
-  if (NEO.__neo_modcenter_loaded) return;
-  NEO.__neo_modcenter_loaded = true;
+  if (NEO.__neo_modcenter_v12_loaded) return;
+  NEO.__neo_modcenter_v12_loaded = true;
 
   const STORE = {
-    keyMods: "neo_modcenter_mods_key_guess",
-    keyInfoBar: "neo_infobar_enabled",
-    keyScale: "neo_ui_scale",
+    keyGuess: "neo_modcenter_enabled_key_guess",
+    keyLibrary: "neo_modcenter_library_v1",
+    keyScale: "neo_modcenter_scale",
   };
 
-  const settings = {
-    infoBar: localStorage.getItem(STORE.keyInfoBar) !== "0",
+  const state = {
+    open: false,
     scale: Number(localStorage.getItem(STORE.keyScale) || "1") || 1,
+    search: "",
+    tab: "installed",
+    lastVanillaModScreen: null,
+    lastVanillaMenuRoot: null,
   };
 
-  // ---- CSS (scoped + safe z-index layering) ----
-  const style = document.createElement("style");
-  style.id = "neoModCenterStyles";
-  style.textContent = `
-    :root{
-      --neo-z-infobar: 999000;
-      --neo-z-panels: 999850;
-      --neo-z-modcenter: 999920;
-      --neo-radius: 16px;
-      --neo-gap: 12px;
-      --neo-pad: 14px;
-      --neo-line: rgba(255,255,255,.12);
-      --neo-bg: rgba(20,20,24,.88);
-      --neo-bg2: rgba(30,30,36,.92);
-      --neo-txt: rgba(255,255,255,.92);
-      --neo-txt2: rgba(255,255,255,.72);
-      --neo-accent: rgba(120,170,255,.95);
-      --neo-danger: rgba(255,90,90,.95);
-      --neo-shadow: 0 20px 60px rgba(0,0,0,.55);
-      --neo-scale: 1;
-    }
-
-    /* ===== Mod Center Overlay ===== */
-    #neoModCenterOverlay{
-      position: fixed;
-      inset: 0;
-      z-index: var(--neo-z-modcenter);
-      display: none;
-      align-items: stretch;
-      justify-content: stretch;
-      background: rgba(0,0,0,.55);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      color: var(--neo-txt);
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      transform: translateZ(0);
-    }
-
-    #neoModCenterOverlay.neo-open{ display: flex; }
-
-    .neoMC{
-      width: 100%;
-      height: 100%;
-      background: linear-gradient(180deg, rgba(18,18,22,.92), rgba(10,10,12,.88));
-      border: 1px solid var(--neo-line);
-      box-shadow: var(--neo-shadow);
-      display: flex;
-      overflow: hidden;
-      font-size: calc(14px * var(--neo-scale));
-    }
-
-    .neoMC__left{
-      width: min(360px, 42vw);
-      min-width: 270px;
-      border-right: 1px solid var(--neo-line);
-      background: rgba(14,14,18,.82);
-      display: flex;
-      flex-direction: column;
-    }
-
-    .neoMC__right{
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      background: rgba(18,18,22,.75);
-      min-width: 0;
-    }
-
-    .neoMC__top{
-      display: flex;
-      gap: var(--neo-gap);
-      align-items: center;
-      padding: var(--neo-pad);
-      border-bottom: 1px solid var(--neo-line);
-      background: rgba(10,10,12,.55);
-    }
-
-    .neoMC__title{
-      display:flex;
-      flex-direction: column;
-      gap: 2px;
-      min-width: 0;
-    }
-
-    .neoMC__title b{
-      font-size: calc(16px * var(--neo-scale));
-      letter-spacing: .2px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .neoMC__title span{
-      color: var(--neo-txt2);
-      font-size: calc(12px * var(--neo-scale));
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .neoBtn{
-      border: 1px solid var(--neo-line);
-      background: rgba(255,255,255,.06);
-      color: var(--neo-txt);
-      padding: 10px 12px;
-      border-radius: 12px;
-      cursor: pointer;
-      user-select: none;
-      font-size: calc(13px * var(--neo-scale));
-      line-height: 1;
-    }
-    .neoBtn:hover{ background: rgba(255,255,255,.10); }
-    .neoBtn:active{ transform: translateY(1px); }
-    .neoBtn.neoPrimary{ border-color: rgba(120,170,255,.4); background: rgba(120,170,255,.18); }
-    .neoBtn.neoDanger{ border-color: rgba(255,90,90,.35); background: rgba(255,90,90,.16); }
-    .neoBtn.neoGhost{ background: transparent; }
-
-    .neoRow{ display:flex; gap: var(--neo-gap); align-items:center; min-width: 0; }
-    .neoGrow{ flex: 1; min-width: 0; }
-    .neoSpacer{ flex: 1; }
-
-    .neoInput{
-      width: 100%;
-      border: 1px solid var(--neo-line);
-      background: rgba(0,0,0,.22);
-      color: var(--neo-txt);
-      padding: 10px 12px;
-      border-radius: 12px;
-      outline: none;
-      font-size: calc(13px * var(--neo-scale));
-    }
-    .neoInput::placeholder{ color: rgba(255,255,255,.45); }
-
-    .neoTabs{
-      display:flex;
-      gap: 8px;
-      padding: 10px 12px;
-      border-bottom: 1px solid var(--neo-line);
-    }
-
-    .neoTab{
-      padding: 10px 12px;
-      border-radius: 12px;
-      border: 1px solid var(--neo-line);
-      background: rgba(255,255,255,.06);
-      cursor: pointer;
-      font-size: calc(13px * var(--neo-scale));
-    }
-    .neoTab.neoActive{
-      border-color: rgba(120,170,255,.45);
-      background: rgba(120,170,255,.18);
-    }
-
-    .neoPanel{
-      flex: 1;
-      min-height: 0;
-      overflow: auto;
-      padding: var(--neo-pad);
-      overscroll-behavior: contain;
-    }
-
-    .neoCard{
-      border: 1px solid var(--neo-line);
-      background: rgba(255,255,255,.05);
-      border-radius: var(--neo-radius);
-      padding: 12px;
-      margin-bottom: 10px;
-    }
-
-    .neoCard h3{
-      margin: 0 0 6px 0;
-      font-size: calc(14px * var(--neo-scale));
-    }
-    .neoCard p{ margin: 0; color: var(--neo-txt2); font-size: calc(12px * var(--neo-scale)); }
-
-    .neoModItem{
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      padding: 10px;
-      border: 1px solid var(--neo-line);
-      background: rgba(0,0,0,.18);
-      border-radius: 14px;
-      margin-bottom: 10px;
-    }
-
-    .neoModName{
-      min-width: 0;
-      display:flex;
-      flex-direction: column;
-      gap: 2px;
-    }
-    .neoModName b{
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      font-size: calc(13px * var(--neo-scale));
-    }
-    .neoModName span{
-      color: var(--neo-txt2);
-      font-size: calc(12px * var(--neo-scale));
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .neoBadge{
-      font-size: calc(11px * var(--neo-scale));
-      padding: 6px 10px;
-      border-radius: 999px;
-      border: 1px solid var(--neo-line);
-      background: rgba(255,255,255,.06);
-      color: var(--neo-txt2);
-      white-space: nowrap;
-    }
-    .neoBadge.neoOk{ border-color: rgba(80,220,140,.35); background: rgba(80,220,140,.12); color: rgba(200,255,225,.9); }
-    .neoBadge.neoWarn{ border-color: rgba(255,200,90,.35); background: rgba(255,200,90,.12); color: rgba(255,240,210,.92); }
-
-    .neoFooter{
-      padding: var(--neo-pad);
-      border-top: 1px solid var(--neo-line);
-      display:flex;
-      gap: var(--neo-gap);
-      align-items: center;
-      background: rgba(10,10,12,.45);
-    }
-
-    /* ===== Info Bar ===== */
-    #neoInfoBar{
-      position: fixed;
-      z-index: var(--neo-z-infobar);
-      right: 10px;
-      top: 10px;
-      max-width: min(520px, 92vw);
-      pointer-events: none;
-      display: none;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      color: var(--neo-txt);
-      font-size: 12px;
-      opacity: .92;
-    }
-    #neoInfoBar.neo-on{ display: block; }
-    #neoInfoBar .neoInfoPill{
-      border: 1px solid rgba(255,255,255,.16);
-      background: rgba(12,12,14,.62);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      border-radius: 999px;
-      padding: 8px 12px;
-      display:flex;
-      gap: 10px;
-      align-items:center;
-      flex-wrap: wrap;
-    }
-    #neoInfoBar b{ color: rgba(255,255,255,.92); font-weight: 700; }
-    #neoInfoBar span{ color: rgba(255,255,255,.72); }
-
-    /* ===== Settings QoL: make menu screens scrollable + readable ===== */
-    .neoScrollFix{
-      max-height: min(86vh, 900px) !important;
-      overflow: auto !important;
-      overscroll-behavior: contain;
-      -webkit-overflow-scrolling: touch;
-    }
-    .neoStickyTop{
-      position: sticky;
-      top: 0;
-      z-index: 2;
-      background: rgba(0,0,0,.18);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      border-bottom: 1px solid rgba(255,255,255,.12);
-      padding-bottom: 10px;
-      margin-bottom: 10px;
-    }
-  `;
-  document.head.appendChild(style);
-
-  // ---- UI scale ----
-  function applyScale() {
-    document.documentElement.style.setProperty("--neo-scale", String(clamp(settings.scale, 0.85, 1.35)));
-  }
-  applyScale();
-
-  // ---- Find / close other panels so nothing overlaps ----
-  function closeOtherPanels() {
-    // If your UI mod exposes hooks, use them
-    try { NEO.closeElements && NEO.closeElements(); } catch {}
-    try { NEO.closeSettings && NEO.closeSettings(); } catch {}
-
-    // Otherwise: best-effort hide known ids/classes without breaking the game
-    const ids = [
-      "neo32ElDrawer","neo31ElDrawer","neoElDrawer","neoElementsDrawer",
-      "neo32Settings","neo31Settings","neoSettingsDrawer","neoOverhaulSettings"
-    ];
-    for (const id of ids) {
-      const el = document.getElementById(id);
-      if (el) el.classList.remove("neo-open");
-    }
-  }
-
-  // ---- Mods storage (robust guesses) ----
-  function isModsArray(v) {
-    return Array.isArray(v) && v.length >= 0 && v.every(x => typeof x === "string");
-  }
   function looksLikeModString(s) {
     if (typeof s !== "string") return false;
     const t = s.trim().toLowerCase();
-    return t.endsWith(".js") || t.startsWith("http://") || t.startsWith("https://") || t.includes(".js?");
+    return (
+      t.endsWith(".js") ||
+      t.includes(".js?") ||
+      t.startsWith("http://") ||
+      t.startsWith("https://")
+    );
   }
 
-  function guessModsKey() {
-    const cached = localStorage.getItem(STORE.keyMods);
-    if (cached && localStorage.getItem(cached) != null) return cached;
-
-    const candidates = ["enabledMods","mods","modList","modsEnabled","enabled_mods","enabled-mods","sb_mods","sbmods"];
-    for (const k of candidates) {
-      const raw = localStorage.getItem(k);
-      if (!raw) continue;
-      try {
-        const v = JSON.parse(raw);
-        if (isModsArray(v) && v.every(looksLikeModString)) {
-          localStorage.setItem(STORE.keyMods, k);
-          return k;
-        }
-      } catch {}
-      // sometimes stored as ; separated string
-      if (typeof raw === "string" && raw.includes(".js")) {
-        const parts = raw.split(";").map(x => x.trim()).filter(Boolean);
-        if (parts.length && parts.every(looksLikeModString)) {
-          localStorage.setItem(STORE.keyMods, k);
-          return k;
-        }
-      }
-    }
-
-    // scan everything
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (!k) continue;
-      const raw = localStorage.getItem(k);
-      if (!raw) continue;
-      if (!raw.includes(".js") && !raw.includes("http")) continue;
-      try {
-        const v = JSON.parse(raw);
-        if (isModsArray(v) && v.some(looksLikeModString)) {
-          localStorage.setItem(STORE.keyMods, k);
-          return k;
-        }
-      } catch {
-        const parts = raw.split(";").map(x => x.trim()).filter(Boolean);
-        if (parts.length && parts.every(looksLikeModString)) {
-          localStorage.setItem(STORE.keyMods, k);
-          return k;
-        }
-      }
-    }
-    return null;
-  }
-
-  function readEnabledMods() {
-    // prefer game globals if available
-    if (Array.isArray(window.enabledMods)) return window.enabledMods.slice();
-
-    const k = guessModsKey();
-    if (!k) return [];
-    const raw = localStorage.getItem(k);
-    if (!raw) return [];
-    try {
-      const v = JSON.parse(raw);
-      if (isModsArray(v)) return v.slice();
-    } catch {}
-    return raw.split(";").map(x => x.trim()).filter(Boolean);
-  }
-
-  function writeEnabledMods(mods) {
-    const clean = Array.from(new Set(mods.map(s => s.trim()).filter(Boolean)));
-    if (Array.isArray(window.enabledMods)) window.enabledMods = clean.slice();
-
-    const k = guessModsKey() || "enabledMods";
-    try {
-      localStorage.setItem(k, JSON.stringify(clean));
-      localStorage.setItem(STORE.keyMods, k);
-      return k;
-    } catch {
-      // fallback
-      localStorage.setItem(k, clean.join(";"));
-      localStorage.setItem(STORE.keyMods, k);
-      return k;
-    }
-  }
-
-  function loadedModsSet() {
-    // Sandboxels has loadedMods in newer versions :contentReference[oaicite:1]{index=1}
-    const arr = Array.isArray(window.loadedMods) ? window.loadedMods : [];
-    return new Set(arr.map(s => String(s)));
-  }
-
-  // ---- Mod Center DOM ----
-  const overlay = document.createElement("div");
-  overlay.id = "neoModCenterOverlay";
-  overlay.innerHTML = `
-    <div class="neoMC" role="dialog" aria-modal="true" aria-label="Neo Mod Center">
-      <div class="neoMC__left">
-        <div class="neoMC__top">
-          <div class="neoMC__title neoGrow">
-            <b>Neo Mod Center</b>
-            <span>Big, scrollable, clickable — no weird stretching</span>
-          </div>
-          <button class="neoBtn neoGhost" id="neoMC_Close" title="Close (Esc)">✕</button>
-        </div>
-
-        <div class="neoTabs" id="neoMC_Tabs">
-          <div class="neoTab neoActive" data-tab="installed">Installed</div>
-          <div class="neoTab" data-tab="add">Add</div>
-          <div class="neoTab" data-tab="tools">Tools</div>
-        </div>
-
-        <div class="neoPanel" id="neoMC_LeftPanel">
-          <div class="neoCard">
-            <h3>Search</h3>
-            <input class="neoInput" id="neoMC_Search" placeholder="Search installed mods..." />
-          </div>
-
-          <div class="neoCard">
-            <h3>UI Size</h3>
-            <div class="neoRow">
-              <button class="neoBtn" id="neoMC_Smaller">A−</button>
-              <button class="neoBtn" id="neoMC_Bigger">A+</button>
-              <div class="neoSpacer"></div>
-              <label class="neoRow" style="gap:8px;">
-                <input type="checkbox" id="neoMC_InfoToggle" />
-                <span style="color:rgba(255,255,255,.78); font-size:12px;">Info bar</span>
-              </label>
-            </div>
-          </div>
-
-          <div class="neoCard">
-            <h3>Quick actions</h3>
-            <div class="neoRow" style="flex-wrap:wrap;">
-              <button class="neoBtn neoPrimary" id="neoMC_Reload">Reload</button>
-              <button class="neoBtn" id="neoMC_CopyAll">Copy list</button>
-              <button class="neoBtn neoDanger" id="neoMC_RemoveAll">Remove all</button>
-            </div>
-            <p style="margin-top:8px;">Reload is needed after adding/removing mods.</p>
-          </div>
-
-          <div class="neoCard">
-            <h3>Official mod list</h3>
-            <div class="neoRow" style="flex-wrap:wrap;">
-              <button class="neoBtn" id="neoMC_OpenList">Open mod list</button>
-            </div>
-          </div>
-
-        </div>
-      </div>
-
-      <div class="neoMC__right">
-        <div class="neoMC__top">
-          <div class="neoGrow" style="min-width:0;">
-            <b id="neoMC_RightTitle">Installed Mods</b>
-            <span id="neoMC_RightSub" style="display:block; color:rgba(255,255,255,.72); font-size:12px; margin-top:2px;">
-              Manage what loads on refresh
-            </span>
-          </div>
-          <button class="neoBtn" id="neoMC_Help">Hotkeys</button>
-        </div>
-
-        <div class="neoPanel" id="neoMC_RightPanel"></div>
-
-        <div class="neoFooter">
-          <span style="color:rgba(255,255,255,.65); font-size:12px;" id="neoMC_FooterText"></span>
-          <div class="neoSpacer"></div>
-          <button class="neoBtn" id="neoMC_Close2">Close</button>
-        </div>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-
-  // ---- Info Bar ----
-  const info = document.createElement("div");
-  info.id = "neoInfoBar";
-  info.innerHTML = `<div class="neoInfoPill" id="neoInfoPill"></div>`;
-  document.body.appendChild(info);
-
-  function getToolbarBottom() {
-    const controls = qs("#controls") || qs(".controls") || qs("[id*='control']");
-    if (!controls) return 10;
-    const r = controls.getBoundingClientRect();
-    return Math.round(r.bottom) + 10;
-  }
-
-  function readVar(...names) {
-    for (const n of names) {
-      if (n in window) return window[n];
-    }
-    return undefined;
-  }
-
-  function renderInfoBar() {
-    if (!settings.infoBar) {
-      info.classList.remove("neo-on");
-      return;
-    }
-    info.classList.add("neo-on");
-    info.style.top = `${getToolbarBottom()}px`;
-
-    const elName = readVar("currentElement","element","selectedElement");
-    const size = readVar("mouseSize","cursorSize","brushSize");
-    const replace = readVar("replaceMode","replace","replacing");
-    const paused = readVar("paused","isPaused","pause");
-    const tps = readVar("tps","TPS","tickSpeed");
-
-    const pill = qs("#neoInfoPill", info);
-    pill.innerHTML = `
-      <span><b>Elem:</b> ${elName ?? "-"}</span>
-      <span><b>Size:</b> ${size ?? "-"}</span>
-      <span><b>Replace:</b> ${(typeof replace === "boolean") ? (replace ? "On" : "Off") : (replace ?? "-")}</span>
-      <span><b>Paused:</b> ${(typeof paused === "boolean") ? (paused ? "Yes" : "No") : (paused ?? "-")}</span>
-      <span><b>TPS:</b> ${tps ?? "-"}</span>
-    `;
-  }
-
-  setInterval(renderInfoBar, 250);
-
-  // ---- Settings QoL: scroll + search inside settings screen ----
-  function enhanceSettingsScreen(screen) {
-    if (!screen || screen.__neoSettingsEnhanced) return;
-    screen.__neoSettingsEnhanced = true;
-
-    // make it scrollable and readable
-    screen.classList.add("neoScrollFix");
-
-    // sticky header wrapper (best-effort)
-    const header = document.createElement("div");
-    header.className = "neoStickyTop";
-    header.innerHTML = `
-      <div style="display:flex; gap:10px; align-items:center; padding:10px 0;">
-        <input class="neoInput" id="neoSettingsSearch_${Math.random().toString(16).slice(2)}" placeholder="Search settings..." />
-        <button class="neoBtn" type="button">Clear</button>
-      </div>
-    `;
-    // Insert at top without breaking layout
-    screen.prepend(header);
-
-    const input = qs("input.neoInput", header);
-    const clearBtn = qs("button.neoBtn", header);
-
-    function allSettingsButtons() {
-      // grab likely clickable controls inside settings menu
-      return qsa("button, input, select, a", screen)
-        .filter(el => el !== input && el !== clearBtn && !header.contains(el));
-    }
-
-    function doFilter() {
-      const q = (input.value || "").trim().toLowerCase();
-      const els = allSettingsButtons();
-      if (!q) {
-        els.forEach(el => (el.style.display = ""));
-        return;
-      }
-      els.forEach(el => {
-        const t = (el.getAttribute("aria-label") || el.title || safeText(el) || "").toLowerCase();
-        el.style.display = t.includes(q) ? "" : "none";
-      });
-    }
-
-    on(input, "input", doFilter);
-    on(clearBtn, "click", () => { input.value = ""; doFilter(); });
-  }
-
-  function detectSettingsOpen() {
-    // best-effort: look for a big menu/prompt containing "Settings" + common setting words
-    const candidates = qsa("div, section").filter(el => el && el.offsetParent !== null);
-    for (const el of candidates) {
-      const t = safeText(el);
-      if (!t) continue;
-      if (t.includes("Settings") && (t.includes("Language") || t.includes("Background") || t.includes("Canvas Size"))) {
-        enhanceSettingsScreen(el);
-        return;
-      }
-    }
-  }
-
-  // ---- Mod Center logic ----
-  let activeTab = "installed";
-  let searchQuery = "";
-
-  function openModCenter() {
-    closeOtherPanels();
-    overlay.classList.add("neo-open");
-    renderAll();
-    // focus search
-    const s = qs("#neoMC_Search", overlay);
-    s && s.focus();
-  }
-
-  function closeModCenter() {
-    overlay.classList.remove("neo-open");
-  }
-
-  function setTab(tab) {
-    activeTab = tab;
-    qsa(".neoTab", overlay).forEach(t => t.classList.toggle("neoActive", t.dataset.tab === tab));
-    renderAll();
-  }
-
-  function normalizeInputMods(str) {
-    // supports semicolon-separated input :contentReference[oaicite:2]{index=2}
+  function normalizeMods(str) {
     return String(str || "")
       .split(";")
       .map(s => s.trim())
       .filter(Boolean);
   }
 
+  // ---------- enabledMods storage (game key guessing) ----------
+  function isModsArray(v) {
+    return Array.isArray(v) && v.every(x => typeof x === "string");
+  }
+
+  function guessEnabledModsKey() {
+    const cached = localStorage.getItem(STORE.keyGuess);
+    if (cached && localStorage.getItem(cached) != null) return cached;
+
+    const candidates = [
+      "enabledMods", "mods", "modList", "modsEnabled",
+      "enabled_mods", "enabled-mods", "sb_mods", "sbmods"
+    ];
+
+    for (const k of candidates) {
+      const raw = localStorage.getItem(k);
+      if (!raw) continue;
+
+      try {
+        const v = JSON.parse(raw);
+        if (isModsArray(v) && v.every(looksLikeModString)) {
+          localStorage.setItem(STORE.keyGuess, k);
+          return k;
+        }
+      } catch {
+        const parts = normalizeMods(raw);
+        if (parts.length && parts.every(looksLikeModString)) {
+          localStorage.setItem(STORE.keyGuess, k);
+          return k;
+        }
+      }
+    }
+
+    // fallback: scan keys
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k) continue;
+      const raw = localStorage.getItem(k);
+      if (!raw || (!raw.includes(".js") && !raw.includes("http"))) continue;
+
+      try {
+        const v = JSON.parse(raw);
+        if (isModsArray(v) && v.some(looksLikeModString)) {
+          localStorage.setItem(STORE.keyGuess, k);
+          return k;
+        }
+      } catch {
+        const parts = normalizeMods(raw);
+        if (parts.length && parts.some(looksLikeModString)) {
+          localStorage.setItem(STORE.keyGuess, k);
+          return k;
+        }
+      }
+    }
+    return "enabledMods";
+  }
+
+  function readEnabledMods() {
+    if (Array.isArray(window.enabledMods)) return window.enabledMods.slice();
+
+    const k = guessEnabledModsKey();
+    const raw = localStorage.getItem(k);
+    if (!raw) return [];
+
+    try {
+      const v = JSON.parse(raw);
+      if (isModsArray(v)) return v.slice();
+    } catch {}
+
+    return normalizeMods(raw);
+  }
+
+  function writeEnabledMods(list) {
+    const clean = Array.from(new Set(list.map(s => s.trim()).filter(Boolean)));
+
+    if (Array.isArray(window.enabledMods)) window.enabledMods = clean.slice();
+
+    const k = guessEnabledModsKey();
+    try {
+      localStorage.setItem(k, JSON.stringify(clean));
+    } catch {
+      localStorage.setItem(k, clean.join(";"));
+    }
+    localStorage.setItem(STORE.keyGuess, k);
+    return k;
+  }
+
+  // ---------- library (keeps mods even when disabled) ----------
+  // library entry: { id: string, enabled: boolean }
+  function readLibrary() {
+    const raw = localStorage.getItem(STORE.keyLibrary);
+    if (!raw) return [];
+    try {
+      const v = JSON.parse(raw);
+      if (Array.isArray(v)) {
+        return v
+          .filter(x => x && typeof x.id === "string")
+          .map(x => ({ id: x.id.trim(), enabled: !!x.enabled }))
+          .filter(x => x.id);
+      }
+    } catch {}
+    return [];
+  }
+
+  function writeLibrary(lib) {
+    const clean = [];
+    const seen = new Set();
+    for (const it of lib || []) {
+      const id = String(it?.id || "").trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      clean.push({ id, enabled: !!it.enabled });
+    }
+    localStorage.setItem(STORE.keyLibrary, JSON.stringify(clean));
+    return clean;
+  }
+
+  // Sync library with current enabled list (first run / external changes)
+  function syncLibraryFromEnabled() {
+    const enabled = new Set(readEnabledMods());
+    const lib = readLibrary();
+    const map = new Map(lib.map(x => [x.id, x.enabled]));
+
+    // Ensure enabled mods are in library and marked enabled
+    for (const m of enabled) map.set(m, true);
+
+    // Build in stable order: keep existing order, then append new enabled ones
+    const out = [];
+    const seen = new Set();
+
+    for (const x of lib) {
+      const en = map.get(x.id) ?? false;
+      out.push({ id: x.id, enabled: en });
+      seen.add(x.id);
+    }
+    for (const m of enabled) {
+      if (!seen.has(m)) out.push({ id: m, enabled: true });
+    }
+    writeLibrary(out);
+  }
+
+  function applyLibraryToEnabled() {
+    const lib = readLibrary();
+    const enabled = lib.filter(x => x.enabled).map(x => x.id);
+    writeEnabledMods(enabled);
+  }
+
+  // ---------- UI + CSS ----------
+  const style = document.createElement("style");
+  style.id = "neoModCenterV12CSS";
+  style.textContent = `
+:root{
+  --neoMC-z: 999920;
+  --neoMC-line: rgba(255,255,255,.14);
+  --neoMC-bg: rgba(16,16,20,.92);
+  --neoMC-bg2: rgba(22,22,28,.92);
+  --neoMC-txt: rgba(255,255,255,.92);
+  --neoMC-txt2: rgba(255,255,255,.68);
+  --neoMC-shadow: 0 20px 60px rgba(0,0,0,.60);
+  --neoMC-radius: 16px;
+  --neoMC-scale: 1;
+}
+#neoMCOverlay{
+  position: fixed; inset: 0;
+  z-index: var(--neoMC-z);
+  display: none;
+  background: rgba(0,0,0,.55);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: var(--neoMC-txt);
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+}
+#neoMCOverlay.open{ display:block; }
+#neoMC{
+  width: min(1200px, 96vw);
+  height: min(88vh, 920px);
+  margin: 6vh auto 0 auto;
+  background: linear-gradient(180deg, rgba(18,18,22,.92), rgba(10,10,12,.88));
+  border: 1px solid var(--neoMC-line);
+  border-radius: var(--neoMC-radius);
+  box-shadow: var(--neoMC-shadow);
+  display: grid;
+  grid-template-columns: minmax(260px, 360px) 1fr;
+  overflow: hidden;
+  font-size: calc(14px * var(--neoMC-scale));
+}
+#neoMCLeft{
+  background: rgba(14,14,18,.84);
+  border-right: 1px solid var(--neoMC-line);
+  display:flex;
+  flex-direction: column;
+  min-width: 0;
+}
+#neoMCRight{
+  background: rgba(18,18,22,.76);
+  display:flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.neoMCTop{
+  display:flex;
+  align-items:center;
+  gap: 12px;
+  padding: 14px;
+  border-bottom: 1px solid var(--neoMC-line);
+  background: rgba(10,10,12,.55);
+}
+.neoMCtitle{
+  display:flex; flex-direction:column; gap:2px; min-width:0;
+}
+.neoMCtitle b{
+  font-size: calc(16px * var(--neoMC-scale));
+  white-space: nowrap; overflow:hidden; text-overflow: ellipsis;
+}
+.neoMCtitle span{
+  color: var(--neoMC-txt2);
+  font-size: calc(12px * var(--neoMC-scale));
+  white-space: nowrap; overflow:hidden; text-overflow: ellipsis;
+}
+.neoRow{ display:flex; gap: 10px; align-items:center; min-width:0; flex-wrap: wrap; }
+.neoGrow{ flex:1; min-width:0; }
+.neoBtn{
+  border: 1px solid var(--neoMC-line);
+  background: rgba(255,255,255,.06);
+  color: var(--neoMC-txt);
+  padding: 10px 12px;
+  border-radius: 12px;
+  cursor:pointer;
+  user-select:none;
+  font-size: calc(13px * var(--neoMC-scale));
+  line-height: 1;
+}
+.neoBtn:hover{ background: rgba(255,255,255,.10); }
+.neoBtn:active{ transform: translateY(1px); }
+.neoBtn.primary{ border-color: rgba(120,170,255,.45); background: rgba(120,170,255,.18); }
+.neoBtn.danger{ border-color: rgba(255,90,90,.35); background: rgba(255,90,90,.16); }
+.neoBtn.ghost{ background: transparent; }
+.neoInput{
+  width: 100%;
+  border: 1px solid var(--neoMC-line);
+  background: rgba(0,0,0,.22);
+  color: var(--neoMC-txt);
+  padding: 10px 12px;
+  border-radius: 12px;
+  outline: none;
+  font-size: calc(13px * var(--neoMC-scale));
+}
+.neoInput::placeholder{ color: rgba(255,255,255,.45); }
+.neoTabs{
+  display:flex;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--neoMC-line);
+}
+.neoTab{
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--neoMC-line);
+  background: rgba(255,255,255,.06);
+  cursor:pointer;
+  font-size: calc(13px * var(--neoMC-scale));
+}
+.neoTab.active{
+  border-color: rgba(120,170,255,.45);
+  background: rgba(120,170,255,.18);
+}
+.neoPanel{
+  flex:1;
+  min-height: 0;
+  overflow:auto;
+  padding: 14px;
+  overscroll-behavior: contain;
+}
+.neoCard{
+  border: 1px solid var(--neoMC-line);
+  background: rgba(255,255,255,.05);
+  border-radius: var(--neoMC-radius);
+  padding: 12px;
+  margin-bottom: 10px;
+}
+.neoCard h3{ margin:0 0 6px 0; font-size: calc(14px * var(--neoMC-scale)); }
+.neoCard p{ margin:0; color: var(--neoMC-txt2); font-size: calc(12px * var(--neoMC-scale)); }
+
+.neoModItem{
+  display:flex;
+  align-items:center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--neoMC-line);
+  background: rgba(0,0,0,.18);
+  border-radius: 14px;
+  margin-bottom: 10px;
+}
+.neoModName{
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+}
+.neoModName b{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size: calc(13px * var(--neoMC-scale)); }
+.neoModName span{ color: var(--neoMC-txt2); font-size: calc(12px * var(--neoMC-scale)); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+.neoToggle{
+  display:flex; align-items:center; gap: 8px;
+  border: 1px solid var(--neoMC-line);
+  background: rgba(255,255,255,.06);
+  border-radius: 999px;
+  padding: 8px 10px;
+}
+.neoToggle input{ transform: scale(1.05); }
+.neoFooter{
+  padding: 14px;
+  border-top: 1px solid var(--neoMC-line);
+  background: rgba(10,10,12,.45);
+  display:flex;
+  gap: 12px;
+  align-items:center;
+}
+`;
+  document.head.appendChild(style);
+
+  function applyScale() {
+    state.scale = clamp(state.scale, 0.85, 1.35);
+    document.documentElement.style.setProperty("--neoMC-scale", String(state.scale));
+    localStorage.setItem(STORE.keyScale, String(state.scale));
+  }
+  applyScale();
+
+  const overlay = document.createElement("div");
+  overlay.id = "neoMCOverlay";
+  overlay.innerHTML = `
+    <div id="neoMC" role="dialog" aria-modal="true" aria-label="Neo Mod Center">
+      <div id="neoMCLeft">
+        <div class="neoMCTop">
+          <div class="neoMCtitle neoGrow">
+            <b>Neo Mod Center</b>
+            <span>Enable/disable without removing</span>
+          </div>
+          <button class="neoBtn ghost" id="neoMCClose" title="Close (Esc)">✕</button>
+        </div>
+
+        <div class="neoTabs" id="neoMCTabs">
+          <div class="neoTab active" data-tab="installed">Installed</div>
+          <div class="neoTab" data-tab="add">Add</div>
+          <div class="neoTab" data-tab="tools">Tools</div>
+        </div>
+
+        <div class="neoPanel">
+          <div class="neoCard">
+            <h3>Search</h3>
+            <input class="neoInput" id="neoMCSearch" placeholder="Search mods..." />
+          </div>
+
+          <div class="neoCard">
+            <h3>UI Size</h3>
+            <div class="neoRow">
+              <button class="neoBtn" id="neoMCSmaller">A−</button>
+              <button class="neoBtn" id="neoMCBigger">A+</button>
+              <div class="neoGrow"></div>
+              <button class="neoBtn primary" id="neoMCReload">Reload</button>
+            </div>
+            <p style="margin-top:8px;">Reload applies changes (unloading mods needs refresh).</p>
+          </div>
+
+          <div class="neoCard">
+            <h3>Quick</h3>
+            <div class="neoRow">
+              <button class="neoBtn" id="neoMCEnableAll">Enable all</button>
+              <button class="neoBtn" id="neoMCDisableAll">Disable all</button>
+              <button class="neoBtn danger" id="neoMCRemoveDisabled">Remove disabled</button>
+            </div>
+            <p style="margin-top:8px;">“Remove disabled” deletes from library (optional).</p>
+          </div>
+        </div>
+      </div>
+
+      <div id="neoMCRight">
+        <div class="neoMCTop">
+          <div class="neoMCtitle neoGrow">
+            <b id="neoMCRTitle">Installed Mods</b>
+            <span id="neoMCRSub">Toggle enabled without deleting</span>
+          </div>
+          <button class="neoBtn" id="neoMCHelp">Hotkeys</button>
+        </div>
+
+        <div class="neoPanel" id="neoMCRPanel"></div>
+
+        <div class="neoFooter">
+          <span style="color:rgba(255,255,255,.65); font-size:12px;" id="neoMCFooter"></span>
+          <div class="neoGrow"></div>
+          <button class="neoBtn" id="neoMCClose2">Close</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  // ---------- don’t overlap other UI panels ----------
+  function closeOtherPanels() {
+    try { NEO.closeElements && NEO.closeElements(); } catch {}
+    try { NEO.closeSettings && NEO.closeSettings(); } catch {}
+  }
+
+  // ---------- vanilla mod menu cleanup (prevents black screen) ----------
+  function findVisibleVanillaModScreen() {
+    // Look for something that is clearly the vanilla mod screen (only when visible)
+    const candidates = qsa("div, section").filter(el => el && el.offsetParent !== null);
+    for (const el of candidates) {
+      const t = safeText(el);
+      if (!t) continue;
+      if (t.includes("Enabled Mods") && (t.includes("Reload") || t.includes("apply"))) return el;
+    }
+    return null;
+  }
+
+  function closeVanillaMenuIfOpen() {
+    // Best-effort: if vanilla mod screen exists, click a visible close/back button near it
+    const modScreen = state.lastVanillaModScreen || findVisibleVanillaModScreen();
+    if (!modScreen) return;
+
+    // Try to click close/back inside it
+    const btns = qsa("button, a", modScreen);
+    const closeBtn = btns.find(b => {
+      const t = safeText(b).toLowerCase();
+      return t === "close" || t === "back" || t === "x" || t.includes("close") || t.includes("back");
+    });
+    if (closeBtn) {
+      closeBtn.click();
+      return;
+    }
+
+    // If no close button, unhide it (we never hide it in v1.2, but safe)
+    modScreen.style.display = "";
+  }
+
+  // ---------- open/close ----------
+  function openModCenter() {
+    syncLibraryFromEnabled();
+    closeOtherPanels();
+
+    // If user clicked mods button, vanilla might have opened; remember it and close after opening ours
+    state.lastVanillaModScreen = findVisibleVanillaModScreen();
+    overlay.classList.add("open");
+    state.open = true;
+    renderAll();
+
+    // Close vanilla overlay AFTER ours is shown (prevents black/flash)
+    setTimeout(() => closeVanillaMenuIfOpen(), 0);
+
+    qs("#neoMCSearch")?.focus();
+  }
+
+  function closeModCenter() {
+    overlay.classList.remove("open");
+    state.open = false;
+
+    // Make sure we aren't leaving the game in a "menu open but empty" state
+    closeVanillaMenuIfOpen();
+  }
+
+  NEO.openModCenter = openModCenter;
+  NEO.closeModCenter = closeModCenter;
+
+  // ---------- rendering ----------
+  function setTab(tab) {
+    state.tab = tab;
+    qsa(".neoTab", overlay).forEach(t => t.classList.toggle("active", t.dataset.tab === tab));
+    renderAll();
+  }
+
   function renderInstalled(panel) {
-    const mods = readEnabledMods();
-    const loaded = loadedModsSet();
+    const lib = readLibrary();
+    const q = state.search.trim().toLowerCase();
 
-    const q = searchQuery.trim().toLowerCase();
-    const filtered = q
-      ? mods.filter(m => m.toLowerCase().includes(q))
-      : mods;
-
-    const count = mods.length;
-    const countFiltered = filtered.length;
-
-    qs("#neoMC_RightTitle", overlay).textContent = "Installed Mods";
-    qs("#neoMC_RightSub", overlay).textContent =
-      q ? `Showing ${countFiltered}/${count} mods` : `${count} mods enabled`;
+    const filtered = q ? lib.filter(x => x.id.toLowerCase().includes(q)) : lib;
+    qs("#neoMCRTitle").textContent = "Installed Mods";
+    qs("#neoMCRSub").textContent = q ? `Showing ${filtered.length}/${lib.length}` : `${lib.length} saved`;
 
     if (!filtered.length) {
       panel.innerHTML = `
         <div class="neoCard">
           <h3>No mods found</h3>
-          <p>${mods.length ? "Try a different search." : "Add a mod in the Add tab."}</p>
+          <p>${lib.length ? "Try another search." : "Go to Add to put mods in your library."}</p>
         </div>
       `;
       return;
     }
 
     panel.innerHTML = "";
-    filtered.forEach((m, idx) => {
-      const isLoaded = loaded.has(m) || loaded.has(m.split("/").pop() || m);
+    for (const item of filtered) {
       const row = document.createElement("div");
       row.className = "neoModItem";
       row.innerHTML = `
         <div class="neoGrow neoModName">
-          <b title="${m.replace(/"/g, "&quot;")}">${m}</b>
-          <span>${m.startsWith("http") ? "URL mod" : "File mod"}</span>
+          <b title="${item.id.replace(/"/g, "&quot;")}">${item.id}</b>
+          <span>${item.id.startsWith("http") ? "URL mod" : "File mod"}</span>
         </div>
-        <span class="neoBadge ${isLoaded ? "neoOk" : "neoWarn"}">${isLoaded ? "Loaded" : "Reload needed"}</span>
-        <button class="neoBtn" data-act="copy" data-mod="${m.replace(/"/g, "&quot;")}">Copy</button>
-        <button class="neoBtn neoDanger" data-act="remove" data-mod="${m.replace(/"/g, "&quot;")}">Remove</button>
+
+        <label class="neoToggle" title="Disable keeps it saved (reload to apply)">
+          <input type="checkbox" ${item.enabled ? "checked" : ""} data-act="toggle" data-id="${item.id.replace(/"/g, "&quot;")}" />
+          <span style="color:rgba(255,255,255,.85); font-size:12px;">Enabled</span>
+        </label>
+
+        <button class="neoBtn" data-act="copy" data-id="${item.id.replace(/"/g, "&quot;")}">Copy</button>
+        <button class="neoBtn danger" data-act="remove" data-id="${item.id.replace(/"/g, "&quot;")}">Remove</button>
       `;
       panel.appendChild(row);
-    });
+    }
 
-    // actions
-    qsa("button[data-act]", panel).forEach(btn => {
-      on(btn, "click", () => {
-        const act = btn.dataset.act;
-        const mod = btn.dataset.mod || "";
-        if (!mod) return;
+    // Actions
+    qsa("[data-act]", panel).forEach(el => {
+      on(el, "click", async (e) => {
+        const act = el.dataset.act;
+        const id = el.dataset.id || "";
+        if (!id) return;
 
         if (act === "copy") {
-          navigator.clipboard?.writeText(mod).catch(() => {});
+          try { await navigator.clipboard.writeText(id); } catch {}
+          return;
         }
         if (act === "remove") {
-          const cur = readEnabledMods().filter(x => x !== mod);
-          writeEnabledMods(cur);
+          const lib2 = readLibrary().filter(x => x.id !== id);
+          writeLibrary(lib2);
+          applyLibraryToEnabled();
           renderAll();
+          return;
         }
+      });
+    });
+
+    // Toggle checkboxes
+    qsa('input[data-act="toggle"]', panel).forEach(chk => {
+      on(chk, "change", () => {
+        const id = chk.dataset.id;
+        const lib2 = readLibrary().map(x => x.id === id ? { id: x.id, enabled: chk.checked } : x);
+        writeLibrary(lib2);
+        applyLibraryToEnabled();
+        qs("#neoMCFooter").textContent = "Changed. Reload to apply.";
       });
     });
   }
 
   function renderAdd(panel) {
-    qs("#neoMC_RightTitle", overlay).textContent = "Add Mods";
-    qs("#neoMC_RightSub", overlay).textContent = "Paste filenames or URLs (use ; for multiple)";
+    qs("#neoMCRTitle").textContent = "Add Mods";
+    qs("#neoMCRSub").textContent = "Paste URLs/filenames; use ; for multiple";
 
     panel.innerHTML = `
       <div class="neoCard">
-        <h3>Add one or more mods</h3>
-        <p>Examples: <span style="color:rgba(255,255,255,.9)">chem.js</span> or <span style="color:rgba(255,255,255,.9)">https://.../mod.js</span></p>
-        <textarea class="neoInput" id="neoMC_AddBox" rows="6" style="resize:vertical; min-height:120px;" placeholder="mods separated by ;"></textarea>
-        <div class="neoRow" style="margin-top:10px; flex-wrap:wrap;">
-          <button class="neoBtn neoPrimary" id="neoMC_AddBtn">Add</button>
-          <button class="neoBtn neoPrimary" id="neoMC_AddReloadBtn">Add + Reload</button>
-          <button class="neoBtn" id="neoMC_ClearAdd">Clear</button>
+        <h3>Add to library</h3>
+        <p>Mods stay saved even when disabled.</p>
+        <textarea class="neoInput" id="neoMCAddBox" rows="6" style="resize:vertical; min-height:140px;" placeholder="example.js; https://.../mod.js"></textarea>
+        <div class="neoRow" style="margin-top:10px;">
+          <button class="neoBtn primary" id="neoMCAddBtn">Add</button>
+          <button class="neoBtn primary" id="neoMCAddReloadBtn">Add + Reload</button>
+          <button class="neoBtn" id="neoMCClearAdd">Clear</button>
         </div>
-      </div>
-
-      <div class="neoCard">
-        <h3>Tip</h3>
-        <p>If a mod still doesn’t show as “Loaded”, hit Reload. Some mods only register after refresh.</p>
       </div>
     `;
 
-    const box = qs("#neoMC_AddBox", panel);
-    const add = qs("#neoMC_AddBtn", panel);
-    const addReload = qs("#neoMC_AddReloadBtn", panel);
-    const clear = qs("#neoMC_ClearAdd", panel);
+    const box = qs("#neoMCAddBox");
+    const add = qs("#neoMCAddBtn");
+    const addR = qs("#neoMCAddReloadBtn");
+    const clear = qs("#neoMCClearAdd");
 
     const doAdd = (reload) => {
-      const incoming = normalizeInputMods(box.value);
-      const valid = incoming.filter(looksLikeModString);
+      const incoming = normalizeMods(box.value).filter(looksLikeModString);
+      if (!incoming.length) return;
 
-      const cur = readEnabledMods();
-      const merged = Array.from(new Set(cur.concat(valid)));
+      const lib = readLibrary();
+      const map = new Map(lib.map(x => [x.id, x.enabled]));
+      for (const m of incoming) map.set(m, true);
 
-      writeEnabledMods(merged);
-      box.value = valid.length ? valid.join("; ") : box.value;
-      renderAll();
+      // preserve old order, append new
+      const out = [];
+      const seen = new Set();
+      for (const x of lib) { out.push({ id: x.id, enabled: map.get(x.id) ?? x.enabled }); seen.add(x.id); }
+      for (const m of incoming) if (!seen.has(m)) out.push({ id: m, enabled: true });
 
+      writeLibrary(out);
+      applyLibraryToEnabled();
+
+      box.value = incoming.join("; ");
+      qs("#neoMCFooter").textContent = "Added. Reload to apply.";
       if (reload) location.reload();
+      else setTab("installed");
     };
 
     on(add, "click", () => doAdd(false));
-    on(addReload, "click", () => doAdd(true));
+    on(addR, "click", () => doAdd(true));
     on(clear, "click", () => (box.value = ""));
   }
 
   function renderTools(panel) {
-    qs("#neoMC_RightTitle", overlay).textContent = "Tools";
-    qs("#neoMC_RightSub", overlay).textContent = "Backup, restore, and sanity controls";
+    const enabledKey = guessEnabledModsKey();
+    const lib = readLibrary();
+    const enabled = lib.filter(x => x.enabled).length;
 
-    const mods = readEnabledMods();
-    const storageKey = guessModsKey() || "(unknown yet)";
+    qs("#neoMCRTitle").textContent = "Tools";
+    qs("#neoMCRSub").textContent = "Export/import and storage info";
 
     panel.innerHTML = `
       <div class="neoCard">
-        <h3>Storage</h3>
-        <p>Mods key: <span style="color:rgba(255,255,255,.9)">${storageKey}</span></p>
-        <p>Enabled mods: <span style="color:rgba(255,255,255,.9)">${mods.length}</span></p>
+        <h3>Status</h3>
+        <p>Enabled storage key: <b style="color:rgba(255,255,255,.92)">${enabledKey}</b></p>
+        <p>Library: <b style="color:rgba(255,255,255,.92)">${lib.length}</b> • Enabled: <b style="color:rgba(255,255,255,.92)">${enabled}</b></p>
       </div>
 
       <div class="neoCard">
         <h3>Export / Import</h3>
-        <p>Export copies a ; separated list you can paste back later.</p>
-        <div class="neoRow" style="flex-wrap:wrap; margin-top:10px;">
-          <button class="neoBtn" id="neoMC_Export">Copy export</button>
-          <button class="neoBtn" id="neoMC_Import">Import from clipboard</button>
+        <p>Exports your library as JSON.</p>
+        <div class="neoRow" style="margin-top:10px;">
+          <button class="neoBtn" id="neoMCExport">Copy export</button>
+          <button class="neoBtn" id="neoMCImport">Import from clipboard</button>
         </div>
       </div>
 
       <div class="neoCard">
-        <h3>Danger zone</h3>
-        <div class="neoRow" style="flex-wrap:wrap; margin-top:10px;">
-          <button class="neoBtn neoDanger" id="neoMC_ClearAll">Disable all mods</button>
-          <button class="neoBtn neoPrimary" id="neoMC_Reload2">Reload</button>
+        <h3>Danger</h3>
+        <div class="neoRow" style="margin-top:10px;">
+          <button class="neoBtn danger" id="neoMCClearLib">Clear library</button>
+          <button class="neoBtn primary" id="neoMCReload2">Reload</button>
         </div>
-        <p style="margin-top:8px;">Disable all = clears enabled list, then you should Reload.</p>
+        <p style="margin-top:8px;">Clearing library disables everything (needs reload).</p>
       </div>
     `;
 
-    on(qs("#neoMC_Export", panel), "click", () => {
-      const list = readEnabledMods().join("; ");
-      navigator.clipboard?.writeText(list).catch(() => {});
+    on(qs("#neoMCExport"), "click", async () => {
+      try { await navigator.clipboard.writeText(JSON.stringify(readLibrary())); } catch {}
     });
 
-    on(qs("#neoMC_Import", panel), "click", async () => {
+    on(qs("#neoMCImport"), "click", async () => {
       try {
-        const text = await navigator.clipboard.readText();
-        const incoming = normalizeInputMods(text).filter(looksLikeModString);
-        if (!incoming.length) return;
-        writeEnabledMods(incoming);
+        const txt = await navigator.clipboard.readText();
+        const v = JSON.parse(txt);
+        if (!Array.isArray(v)) return;
+        const lib2 = v
+          .filter(x => x && typeof x.id === "string")
+          .map(x => ({ id: x.id.trim(), enabled: !!x.enabled }))
+          .filter(x => x.id && looksLikeModString(x.id));
+        writeLibrary(lib2);
+        applyLibraryToEnabled();
+        qs("#neoMCFooter").textContent = "Imported. Reload to apply.";
         renderAll();
       } catch {}
     });
 
-    on(qs("#neoMC_ClearAll", panel), "click", () => {
-      writeEnabledMods([]);
+    on(qs("#neoMCClearLib"), "click", () => {
+      writeLibrary([]);
+      applyLibraryToEnabled();
+      qs("#neoMCFooter").textContent = "Cleared. Reload to apply.";
       renderAll();
     });
 
-    on(qs("#neoMC_Reload2", panel), "click", () => location.reload());
+    on(qs("#neoMCReload2"), "click", () => location.reload());
   }
 
   function renderAll() {
-    // left controls
-    qs("#neoMC_InfoToggle", overlay).checked = !!settings.infoBar;
-    qs("#neoMC_FooterText", overlay).textContent = `Tip: Ctrl+M opens Mod Center • Esc closes`;
+    const panel = qs("#neoMCRPanel");
+    if (!panel) return;
 
-    // right panel render
-    const right = qs("#neoMC_RightPanel", overlay);
-    if (!right) return;
+    qs("#neoMCFooter").textContent = "Tip: Disable keeps it saved • Reload applies changes";
 
-    if (activeTab === "installed") renderInstalled(right);
-    if (activeTab === "add") renderAdd(right);
-    if (activeTab === "tools") renderTools(right);
+    if (state.tab === "installed") renderInstalled(panel);
+    if (state.tab === "add") renderAdd(panel);
+    if (state.tab === "tools") renderTools(panel);
   }
 
-  // ---- Wire overlay controls ----
-  on(qs("#neoMC_Close", overlay), "click", closeModCenter);
-  on(qs("#neoMC_Close2", overlay), "click", closeModCenter);
+  // ---------- wire UI events ----------
+  on(qs("#neoMCClose"), "click", closeModCenter);
+  on(qs("#neoMCClose2"), "click", closeModCenter);
 
   on(overlay, "click", (e) => {
     if (e.target === overlay) closeModCenter();
   });
 
-  on(document, "keydown", (e) => {
-    if (e.key === "Escape" && overlay.classList.contains("neo-open")) {
-      e.preventDefault();
-      closeModCenter();
-      return;
-    }
-    // Ctrl+M / Cmd+M open
-    const isMac = navigator.platform.toLowerCase().includes("mac");
-    if ((isMac ? e.metaKey : e.ctrlKey) && e.key.toLowerCase() === "m") {
-      e.preventDefault();
-      openModCenter();
-    }
-  });
-
-  on(qs("#neoMC_Tabs", overlay), "click", (e) => {
-    const tab = e.target && e.target.dataset && e.target.dataset.tab;
+  on(qs("#neoMCTabs"), "click", (e) => {
+    const tab = e.target?.dataset?.tab;
     if (tab) setTab(tab);
   });
 
-  on(qs("#neoMC_Search", overlay), "input", (e) => {
-    searchQuery = e.target.value || "";
-    if (activeTab !== "installed") setTab("installed");
+  on(qs("#neoMCSearch"), "input", (e) => {
+    state.search = e.target.value || "";
+    if (state.tab !== "installed") setTab("installed");
     else renderAll();
   });
 
-  on(qs("#neoMC_Reload", overlay), "click", () => location.reload());
-  on(qs("#neoMC_CopyAll", overlay), "click", () => {
-    const list = readEnabledMods().join("; ");
-    navigator.clipboard?.writeText(list).catch(() => {});
-  });
-  on(qs("#neoMC_RemoveAll", overlay), "click", () => {
-    writeEnabledMods([]);
-    renderAll();
-  });
+  on(qs("#neoMCReload"), "click", () => location.reload());
 
-  on(qs("#neoMC_OpenList", overlay), "click", () => {
-    window.open("https://sandboxels.r74n.com/mod-list", "_blank");
-  });
-
-  on(qs("#neoMC_Help", overlay), "click", () => {
-    alert("Hotkeys:\n- Ctrl+M / Cmd+M: open Mod Center\n- Esc: close\n\nTip: After adding/removing mods, Reload to apply.");
-  });
-
-  on(qs("#neoMC_InfoToggle", overlay), "change", (e) => {
-    settings.infoBar = !!e.target.checked;
-    localStorage.setItem(STORE.keyInfoBar, settings.infoBar ? "1" : "0");
-    renderInfoBar();
-  });
-
-  on(qs("#neoMC_Bigger", overlay), "click", () => {
-    settings.scale = clamp(settings.scale + 0.05, 0.85, 1.35);
-    localStorage.setItem(STORE.keyScale, String(settings.scale));
+  on(qs("#neoMCBigger"), "click", () => {
+    state.scale = clamp(state.scale + 0.05, 0.85, 1.35);
     applyScale();
     renderAll();
   });
-  on(qs("#neoMC_Smaller", overlay), "click", () => {
-    settings.scale = clamp(settings.scale - 0.05, 0.85, 1.35);
-    localStorage.setItem(STORE.keyScale, String(settings.scale));
+  on(qs("#neoMCSmaller"), "click", () => {
+    state.scale = clamp(state.scale - 0.05, 0.85, 1.35);
     applyScale();
     renderAll();
   });
 
-  // ---- Intercept native Mods button (so you don't get the glitchy screen) ----
+  on(qs("#neoMCEnableAll"), "click", () => {
+    const lib = readLibrary().map(x => ({ id: x.id, enabled: true }));
+    writeLibrary(lib);
+    applyLibraryToEnabled();
+    qs("#neoMCFooter").textContent = "Enabled all. Reload to apply.";
+    renderAll();
+  });
+
+  on(qs("#neoMCDisableAll"), "click", () => {
+    const lib = readLibrary().map(x => ({ id: x.id, enabled: false }));
+    writeLibrary(lib);
+    applyLibraryToEnabled();
+    qs("#neoMCFooter").textContent = "Disabled all. Reload to apply.";
+    renderAll();
+  });
+
+  on(qs("#neoMCRemoveDisabled"), "click", () => {
+    const lib = readLibrary().filter(x => x.enabled);
+    writeLibrary(lib);
+    applyLibraryToEnabled();
+    qs("#neoMCFooter").textContent = "Removed disabled from library. Reload to apply.";
+    renderAll();
+  });
+
+  on(qs("#neoMCHelp"), "click", () => {
+    alert("Hotkeys:\n- Ctrl+Shift+M (Cmd+Shift+M on Mac): open Mod Center\n- Esc: close\n\nNotes:\n- Disable keeps mods saved.\n- Reload applies changes.");
+  });
+
+  // Esc closes when open
+  on(document, "keydown", (e) => {
+    if (e.key === "Escape" && state.open) {
+      e.preventDefault();
+      closeModCenter();
+    }
+  }, { passive: false });
+
+  // Open hotkey (avoid Ctrl+M because browsers / OS steal it)
+  on(document, "keydown", (e) => {
+    const isMac = navigator.platform.toLowerCase().includes("mac");
+    const cmdOrCtrl = isMac ? e.metaKey : e.ctrlKey;
+    if (cmdOrCtrl && e.shiftKey && e.key.toLowerCase() === "m") {
+      e.preventDefault();
+      openModCenter();
+    }
+  }, { passive: false });
+
+  // ---------- intercept Mods button (NO auto-open at startup) ----------
   function wireModsButton() {
-    // try common toolbar containers first
-    const roots = [
-      qs("#controls"),
-      qs("#toolControls"),
-      document.body
-    ].filter(Boolean);
-
+    const roots = [qs("#toolControls"), qs("#controls"), document.body].filter(Boolean);
     let btn = null;
+
     for (const root of roots) {
-      const candidates = qsa("button, a, div", root);
+      const candidates = qsa("button, a", root);
       btn = candidates.find(el => safeText(el) === "Mods" || (el.title && el.title.toLowerCase().includes("mod")));
       if (btn) break;
     }
-    if (!btn || btn.__neoWiredMods) return;
-    btn.__neoWiredMods = true;
+    if (!btn || btn.__neoMCwired) return;
+    btn.__neoMCwired = true;
 
-    on(btn, "click", (e) => {
-      // stop vanilla screen
+    // capture phase so vanilla won’t open
+    btn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
       openModCenter();
     }, true);
   }
 
-  // ---- If vanilla mod screen still appears, replace it (best-effort) ----
-  function autoReplaceVanillaModScreen() {
-    const nodes = qsa("div, section").filter(el => el && el.offsetParent !== null);
-    for (const el of nodes) {
-      const t = safeText(el);
-      if (!t) continue;
-      if (t.includes("Enabled Mods") && t.includes("Reload to apply changes")) {
-        // hide vanilla and show ours
-        el.style.display = "none";
-        openModCenter();
-        return;
-      }
-    }
-  }
+  // keep wiring (game rebuilds toolbar sometimes)
+  setInterval(wireModsButton, 700);
 
-  // keep wiring (Sandboxels rebuilds UI sometimes)
-  setInterval(() => {
-    wireModsButton();
-    detectSettingsOpen();
-    autoReplaceVanillaModScreen();
-  }, 600);
-
-  // expose for other parts of your overhaul
-  NEO.openModCenter = openModCenter;
+  // initial sync once
+  syncLibraryFromEnabled();
 })();
