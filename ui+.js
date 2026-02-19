@@ -17,10 +17,13 @@
     hideCats: "neo_ui/hide_cats",
     scale: "neo_ui/scale",
     tps: "neo_ui/tps",
+    topLift: "neo_ui/top_lift",
     modLib: "neo_ui/modlib",
     modKeyGuess: "neo_ui/modkey_guess",
     neoMods: "neo_ui/neomods",
     neoModsSessionOff: "neo_ui/neomods_session_off",
+    startModsSessionOff: "neo_ui/startmods_session_off",
+    favFirst: "neo_ui/fav_first",
   };
 
   const D = {
@@ -41,13 +44,14 @@
     hotkeys: true,
     modsInOverhaul: true,
     smarterHumans: false,
+    favFirst: true,
+    topLift: 10,
   };
 
   const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
   const jp = (s, f) => { try { return JSON.parse(s); } catch { return f; } };
-  const now = () => Date.now();
 
   const loadSettings = () => ({ ...D, ...(jp(localStorage.getItem(K.settings) || "{}", {})) });
   const saveSettings = (v) => localStorage.setItem(K.settings, JSON.stringify(v));
@@ -92,11 +96,18 @@
     }, 60);
   });
 
+  const copyText = (t) => {
+    const s = String(t ?? "");
+    if (!s) return;
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(s).catch(() => prompt("Copy:", s));
+    else prompt("Copy:", s);
+  };
+
   const toast = (msg) => {
     if (!loadSettings().toasts) return;
     const t = $("#neoToast");
     if (!t) return;
-    t.textContent = msg;
+    t.textContent = String(msg ?? "");
     t.style.display = "block";
     clearTimeout(toast._tm);
     toast._tm = setTimeout(() => (t.style.display = "none"), 1200);
@@ -106,29 +117,43 @@
     const s = loadSettings();
     const raw = localStorage.getItem(K.scale);
     const v = raw == null ? s.scale : parseFloat(raw);
-    return clamp(Number.isFinite(v) ? v : s.scale, 1.0, 1.65);
+    return clamp(Number.isFinite(v) ? v : s.scale, 1.0, 1.75);
   };
   const setScale = (v) => {
-    const n = clamp(v, 1.0, 1.65);
+    const n = clamp(v, 1.0, 1.75);
     localStorage.setItem(K.scale, String(n));
     document.body.style.setProperty("--neoScale", String(n));
     updateTop();
     toast(`UI ${n.toFixed(2)}`);
   };
 
+  const readTopLift = () => {
+    const s = loadSettings();
+    const raw = localStorage.getItem(K.topLift);
+    const v = raw == null ? s.topLift : parseInt(raw, 10);
+    return clamp(Number.isFinite(v) ? v : s.topLift, 0, 28);
+  };
+  const setTopLift = (v) => {
+    const n = clamp(Math.round(v), 0, 28);
+    localStorage.setItem(K.topLift, String(n));
+    updateTop();
+  };
+
   const cleanup = () => {
     [
-      "neoStyle","neoOverlay","neoElements","neoOverhaul","neoEdgeL","neoEdgeR","neoToast","neoTopE","neoTopO","neoInfo"
+      "neoStyle",
+      "neoOverlay","neoElements","neoOverhaul","neoEdgeL","neoEdgeR","neoToast","neoTopE","neoTopO","neoInfo",
+      "neoCreditStyle"
     ].forEach(id => $(`#${id}`)?.remove());
-    document.body.classList.remove("neoUI");
+    document.body.classList.remove("neoUI", "neoTopStyle", "neoHideVanilla", "neoCompact", "neoHideCats");
   };
 
   const styleText = () => `
 body.neoUI{
   --neoScale:${readScale()};
-  --neoTop:110px;
-  --neoWE:520px;
-  --neoWO:520px;
+  --neoTop:96px;
+  --neoWE:560px;
+  --neoWO:560px;
 
   --neoPanel:rgba(18,21,28,.92);
   --neoPanel2:rgba(14,16,22,.92);
@@ -172,7 +197,7 @@ body.neoUI.neoTopStyle #controls .controlButton{
 
 #neoEdgeL,#neoEdgeR{
   position:fixed;
-  top:calc(var(--neoTop) + 12px);
+  top:calc(var(--neoTop) + 10px);
   z-index:999995;
   user-select:none;
   cursor:pointer;
@@ -203,7 +228,7 @@ body.neoUI.neoTopStyle #controls .controlButton{
   display:flex;
   flex-direction:column;
   max-width:calc(100vw - 20px);
-  min-height:280px;
+  min-height:320px;
 }
 #neoElements{
   left:10px;
@@ -233,7 +258,7 @@ body.neoUI.neoTopStyle #controls .controlButton{
   border-top-left-radius:18px;border-top-right-radius:18px;
 }
 .neoTitle{font-weight:900;letter-spacing:.6px;}
-.neoBtns{display:flex;gap:8px;}
+.neoBtns{display:flex;gap:8px;align-items:center;}
 .neoBtn{
   border-radius:12px;
   border:1px solid var(--neoBorder2);
@@ -241,6 +266,9 @@ body.neoUI.neoTopStyle #controls .controlButton{
   color:var(--neoText);
   padding:8px 10px;
   cursor:pointer;
+}
+.neoBtn.ghost{
+  background:rgba(255,255,255,.03);
 }
 
 .neoTabs{display:flex;gap:8px;padding:10px 12px 0 12px;}
@@ -266,11 +294,11 @@ body.neoUI.neoTopStyle #controls .controlButton{
 #neoElBody{
   flex:1;
   display:grid;
-  grid-template-columns:170px 1fr;
+  grid-template-columns:180px 1fr;
   gap:10px;
   padding:10px 12px 12px 12px;
   overflow:hidden;
-  min-height:220px;
+  min-height:240px;
 }
 body.neoUI.neoHideCats #neoElBody{grid-template-columns:1fr;}
 body.neoUI.neoHideCats #neoCats{display:none;}
@@ -283,7 +311,7 @@ body.neoUI.neoHideCats #neoCats{display:none;}
   padding:8px;
 }
 
-#neoElRight{display:flex;flex-direction:column;gap:10px;overflow:hidden;min-height:220px;}
+#neoElRight{display:flex;flex-direction:column;gap:10px;overflow:hidden;min-height:240px;}
 
 #neoGridWrap{
   flex:1;
@@ -293,7 +321,7 @@ body.neoUI.neoHideCats #neoCats{display:none;}
   overflow:hidden;
   display:flex;
   flex-direction:column;
-  min-height:200px;
+  min-height:220px;
 }
 #neoGridHead{
   padding:10px;
@@ -308,7 +336,7 @@ body.neoUI.neoHideCats #neoCats{display:none;}
   display:grid;
   grid-template-columns:repeat(auto-fill, minmax(150px, 1fr));
   gap:10px;
-  min-height:180px;
+  min-height:200px;
 }
 body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(125px, 1fr));gap:8px;}
 
@@ -321,7 +349,19 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
 }
 .neoDot{width:14px;height:14px;border-radius:999px;box-shadow:inset 0 0 0 2px rgba(0,0,0,.25);}
 .neoName{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.neoStar{margin-left:auto;opacity:.9;}
+.neoStarBtn{
+  margin-left:auto;
+  border:1px solid rgba(255,255,255,.14);
+  background:rgba(255,255,255,.05);
+  color:rgba(255,255,255,.90);
+  border-radius:12px;
+  padding:6px 8px;
+  cursor:pointer;
+}
+.neoStarBtn.on{
+  border-color:rgba(167,139,250,.45);
+  background:rgba(167,139,250,.12);
+}
 
 #neoPreview{
   border:1px solid var(--neoBorder2);
@@ -350,28 +390,22 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
 .neoToggle:hover{background:rgba(255,255,255,.05);}
 .neoSmall{font-size:12px;color:var(--neoMuted);margin-top:2px;}
 
-#neoModsWrap{
+.neoCard{
   border:1px solid var(--neoBorder2);
   border-radius:14px;
   background:rgba(0,0,0,.10);
   padding:10px;
 }
-#neoModsTop{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
-#neoModsAdd,#neoModsFind{
-  flex:1;min-width:220px;
+.neoRow{
+  display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+}
+.neoInput{
+  flex:1;min-width:240px;
   border-radius:14px;border:1px solid var(--neoBorder2);
   background:rgba(255,255,255,.05);
   color:var(--neoText);
   padding:10px 12px;outline:none;
 }
-.neoModsRow{
-  display:flex;gap:10px;align-items:center;
-  padding:10px;border-radius:14px;
-  border:1px solid rgba(255,255,255,.10);
-  background:rgba(0,0,0,.14);
-  margin-top:10px;
-}
-.neoModsRow b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .neoBadge{
   font-size:11px;padding:6px 10px;border-radius:999px;
   border:1px solid rgba(255,255,255,.14);
@@ -421,7 +455,7 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
 }
 #neoInfo.on{display:block;}
 #neoInfo .pill{
-  max-width:min(560px, 92vw);
+  max-width:min(620px, 92vw);
   border:1px solid rgba(255,255,255,.16);
   background:rgba(12,12,14,.62);
   backdrop-filter:blur(10px);
@@ -438,7 +472,27 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
 }
 #neoInfo b{color:rgba(255,255,255,.92);}
 #neoInfo span{color:rgba(255,255,255,.74);}
+
+.neoCreditTag{
+  color: rgba(167,139,250,.95);
+  font-weight: 900;
+  margin-left: 8px;
+}
 `;
+
+  const isCompact = () => (localStorage.getItem(K.compact) ?? (loadSettings().compact ? "1" : "0")) === "1";
+  const isHideCats = () => (localStorage.getItem(K.hideCats) ?? (loadSettings().hideCats ? "1" : "0")) === "1";
+  const isFavFirst = () => (localStorage.getItem(K.favFirst) ?? (loadSettings().favFirst ? "1" : "0")) === "1";
+
+  const applyFlags = () => {
+    document.body.classList.toggle("neoCompact", isCompact());
+    document.body.classList.toggle("neoHideCats", isHideCats());
+  };
+
+  const isOpenE = () => localStorage.getItem(K.openE) === "1";
+  const isOpenO = () => localStorage.getItem(K.openO) === "1";
+  const isMax = (w) => localStorage.getItem(w === "e" ? K.maxE : K.maxO) === "1";
+  const desiredW = (k, f) => clamp(parseInt(localStorage.getItem(k) || String(f), 10) || f, 340, 980);
 
   const elementColor = (name) => {
     const def = window.elements?.[name];
@@ -484,23 +538,36 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
     return map;
   };
 
-  const isCompact = () => (localStorage.getItem(K.compact) ?? (loadSettings().compact ? "1" : "0")) === "1";
-  const isHideCats = () => (localStorage.getItem(K.hideCats) ?? (loadSettings().hideCats ? "1" : "0")) === "1";
+  const favs = () => loadList(K.favs);
+  const setFavs = (a) => saveList(K.favs, a, 60);
+  const recents = () => loadList(K.recents);
+  const setRecents = (a) => saveList(K.recents, a, 30);
 
-  const applyFlags = () => {
-    document.body.classList.toggle("neoCompact", isCompact());
-    document.body.classList.toggle("neoHideCats", isHideCats());
+  let tab = localStorage.getItem(K.tab) || "all";
+  let cat = localStorage.getItem(K.cat) || "all";
+
+  const setTab = (t) => {
+    tab = t;
+    localStorage.setItem(K.tab, t);
+    $("#neoTabAll")?.classList.toggle("active", t === "all");
+    $("#neoTabFav")?.classList.toggle("active", t === "fav");
+    $("#neoTabRec")?.classList.toggle("active", t === "recent");
+    renderCats();
+    renderElements();
   };
 
-  const isOpenE = () => localStorage.getItem(K.openE) === "1";
-  const isOpenO = () => localStorage.getItem(K.openO) === "1";
-  const isMax = (w) => localStorage.getItem(w === "e" ? K.maxE : K.maxO) === "1";
-  const desiredW = (k, f) => clamp(parseInt(localStorage.getItem(k) || String(f), 10) || f, 340, 900);
+  const setCat = (c) => {
+    cat = c;
+    localStorage.setItem(K.cat, c);
+    renderCats();
+    renderElements();
+  };
 
   const syncOverlay = () => $("#neoOverlay")?.classList.toggle("open", isOpenE() || isOpenO());
+
   const syncEdges = () => {
     const s = loadSettings();
-    const show = s.enableNeoUI && (s.neoElementsUI || s.neoOverhaulUI);
+    const show = !!(s.enableNeoUI && (s.neoElementsUI || s.neoOverhaulUI));
     $("#neoEdgeL")?.classList.toggle("hidden", !show || !s.neoElementsUI || isOpenE());
     $("#neoEdgeR")?.classList.toggle("hidden", !show || !s.neoOverhaulUI || isOpenO());
   };
@@ -510,8 +577,9 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
     const openO = isOpenO();
     const maxE = isMax("e");
     const maxO = isMax("o");
-    let wE = desiredW(K.wE, 520);
-    let wO = desiredW(K.wO, 520);
+
+    let wE = desiredW(K.wE, 560);
+    let wO = desiredW(K.wO, 560);
 
     if (!maxE && !maxO && openE && openO) {
       const vw = window.innerWidth;
@@ -523,20 +591,31 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
 
     document.body.style.setProperty("--neoWE", `${wE}px`);
     document.body.style.setProperty("--neoWO", `${wO}px`);
+
     syncOverlay();
     syncEdges();
   };
 
   const updateTop = () => {
-    const controls = $("#controls");
-    const tool = $("#toolControls");
-    if (!controls && !tool) return;
+    const vh = window.innerHeight || 800;
+    let top = 64;
 
-    let top = 90;
-    if (controls) top = Math.max(top, Math.round(controls.getBoundingClientRect().bottom) + 10);
-    if (tool) top = Math.max(top, Math.round(tool.getBoundingClientRect().bottom) + 10);
+    const consider = (node) => {
+      if (!node) return;
+      const r = node.getBoundingClientRect();
+      if (r.bottom <= 0) return;
+      if (r.top > vh * 0.45) return;
+      top = Math.max(top, Math.round(r.bottom) + 8);
+    };
 
-    top = clamp(top, 70, Math.floor(window.innerHeight * 0.32));
+    consider($("#toolControls"));
+    consider($("#controls"));
+
+    top = clamp(top, 56, Math.floor(vh * 0.35));
+
+    const lift = readTopLift();
+    top = clamp(top - lift, 48, Math.floor(vh * 0.35));
+
     document.body.style.setProperty("--neoTop", `${top}px`);
 
     const info = $("#neoInfo");
@@ -545,7 +624,7 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
 
   const setOpenE = (v) => {
     const s = loadSettings();
-    if (!s.neoElementsUI) return;
+    if (!s.enableNeoUI || !s.neoElementsUI) return;
     if (v && window.innerWidth < 900) setOpenO(false);
     localStorage.setItem(K.openE, v ? "1" : "0");
     $("#neoElements")?.classList.toggle("open", v);
@@ -555,7 +634,7 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
 
   const setOpenO = (v) => {
     const s = loadSettings();
-    if (!s.neoOverhaulUI) return;
+    if (!s.enableNeoUI || !s.neoOverhaulUI) return;
     if (v && window.innerWidth < 900) setOpenE(false);
     localStorage.setItem(K.openO, v ? "1" : "0");
     $("#neoOverhaul")?.classList.toggle("open", v);
@@ -584,32 +663,17 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
     updateLayout();
   };
 
-  let tab = localStorage.getItem(K.tab) || "all";
-  let cat = localStorage.getItem(K.cat) || "all";
-
-  const favs = () => loadList(K.favs);
-  const setFavs = (a) => saveList(K.favs, a, 40);
-  const recents = () => loadList(K.recents);
-  const setRecents = (a) => saveList(K.recents, a, 24);
-
-  const setTab = (t) => {
-    tab = t;
-    localStorage.setItem(K.tab, t);
-    $("#neoTabAll")?.classList.toggle("active", t === "all");
-    $("#neoTabFav")?.classList.toggle("active", t === "fav");
-    $("#neoTabRec")?.classList.toggle("active", t === "recent");
-    renderCats();
-    renderElements();
-  };
-
-  const setCat = (c) => {
-    cat = c;
-    localStorage.setItem(K.cat, c);
-    renderCats();
-    renderElements();
+  const toggleFav = (name) => {
+    const f = favs();
+    const i = f.indexOf(name);
+    if (i >= 0) f.splice(i, 1);
+    else f.unshift(name);
+    setFavs(f);
   };
 
   const renderCats = () => {
+    const s = loadSettings();
+    if (!s.enableNeoUI || !s.neoElementsUI) return;
     const wrap = $("#neoCats");
     if (!wrap) return;
     const { cats } = buildIndex();
@@ -662,6 +726,13 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
       });
     }
 
+    if (tab === "all" && isFavFirst() && favSet.size) {
+      const fav = [];
+      const rest = [];
+      for (const n of list) (favSet.has(n) ? fav : rest).push(n);
+      list = fav.concat(rest);
+    }
+
     grid.innerHTML = "";
     let shown = 0;
 
@@ -670,32 +741,35 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
       if (!def || def.hidden) continue;
 
       const btn = el("button", { class: "neoElBtn" });
+
       btn.appendChild(el("span", { class: "neoDot", style: `background:${elementColor(name)};` }));
       btn.appendChild(el("span", { class: "neoName" }, prettyName(name)));
-      if (favSet.has(name)) btn.appendChild(el("span", { class: "neoStar" }, "★"));
 
-      btn.onclick = () => {
-        if (typeof window.selectElement === "function") window.selectElement(name);
-        const r = recents();
-        setRecents([name, ...r.filter(x => x !== name)], 24);
-        toast(prettyName(name));
-        if (loadSettings().autoCloseOnPick) setOpenE(false);
+      const star = el("button", { class: `neoStarBtn ${favSet.has(name) ? "on" : ""}` }, favSet.has(name) ? "★" : "☆");
+      star.onclick = (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        toggleFav(name);
+        renderElements();
       };
 
-      btn.oncontextmenu = (ev) => {
-        ev.preventDefault();
-        const f = favs();
-        const i = f.indexOf(name);
-        if (i >= 0) f.splice(i, 1); else f.unshift(name);
-        setFavs(f);
-        renderElements();
+      btn.appendChild(star);
+
+      btn.onclick = (ev) => {
+        const keepOpen = ev.shiftKey;
+        if (typeof window.selectElement === "function") window.selectElement(name);
+
+        const r = recents();
+        setRecents([name, ...r.filter(x => x !== name)], 30);
+
+        if (!keepOpen && loadSettings().autoCloseOnPick) setOpenE(false);
       };
 
       grid.appendChild(btn);
       shown++;
     }
 
-    if (count) count.textContent = `${shown} • right-click = favorite`;
+    if (count) count.textContent = `${shown}`;
 
     const prev = $("#neoPreview");
     if (prev) {
@@ -704,6 +778,55 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
     }
   };
 
+  const findModRoot = () => $("#modManager") || $("#modManagerScreen") || $("#modMenu") || $("#modMenuScreen");
+
+  const findModRows = (root) => {
+    if (!root) return [];
+    const checks = $$('input[type="checkbox"]', root);
+    const rows = new Set();
+    for (const cb of checks) {
+      const row = cb.closest("div, li, tr") || cb.parentElement;
+      if (row && row.textContent && row.textContent.trim()) rows.add(row);
+    }
+    return Array.from(rows).filter(x => x instanceof HTMLElement);
+  };
+
+  const improveModsBar = () => {
+    const s = loadSettings();
+    if (!s.enableNeoUI || !s.neoModsBar) return;
+    const root = findModRoot();
+    if (!root) return;
+    if ($("#neoModTools", root)) return;
+
+    const bar = el("div", { id: "neoModTools" },
+      el("input", { id: "neoModSearch", type: "text", placeholder: "Search mods…" }),
+      el("button", {
+        class: "neoMiniBtn",
+        onclick: () => { setOpenO(true); setTimeout(() => $("#neoModsCard")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); }
+      }, "Neo Mods"),
+      el("button", { class: "neoMiniBtn", onclick: () => setScale(readScale() + 0.06) }, "UI +"),
+      el("button", { class: "neoMiniBtn", onclick: () => setScale(readScale() - 0.06) }, "UI −"),
+      el("button", {
+        class: "neoMiniBtn",
+        onclick: () => { const i = $("#neoModSearch", root); i.value = ""; i.dispatchEvent(new Event("input")); }
+      }, "Clear")
+    );
+
+    root.prepend(bar);
+
+    const input = $("#neoModSearch", root);
+    input.addEventListener("input", () => {
+      const q = input.value.trim().toLowerCase();
+      const rows = findModRows(root);
+      for (const r of rows) {
+        const t = (r.textContent || "").toLowerCase();
+        r.style.display = (!q || t.includes(q)) ? "" : "none";
+      }
+    });
+  };
+
+  const watchModsMenu = () => setInterval(improveModsBar, 900);
+
   const modLooks = (x) => {
     if (typeof x !== "string") return false;
     const t = x.trim().toLowerCase();
@@ -711,7 +834,6 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
   };
 
   const splitMods = (str) => String(str || "").split(";").map(s => s.trim()).filter(Boolean);
-
   const isModsArray = (v) => Array.isArray(v) && v.every(x => typeof x === "string");
 
   const guessModsKey = () => {
@@ -775,7 +897,7 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
     if (!Array.isArray(v)) return [];
     return v
       .filter(x => x && typeof x.id === "string")
-      .map(x => ({ id: x.id.trim(), enabled: !!x.enabled, addedAt: Number(x.addedAt || now()) }))
+      .map(x => ({ id: x.id.trim(), enabled: !!x.enabled, addedAt: Number(x.addedAt || Date.now()) }))
       .filter(x => x.id);
   };
 
@@ -786,11 +908,14 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
       const id = String(it?.id || "").trim();
       if (!id || seen.has(id)) continue;
       seen.add(id);
-      out.push({ id, enabled: !!it.enabled, addedAt: Number(it.addedAt || now()) });
+      out.push({ id, enabled: !!it.enabled, addedAt: Number(it.addedAt || Date.now()) });
     }
     localStorage.setItem(K.modLib, JSON.stringify(out));
     return out;
   };
+
+  const readStartSessionOff = () => new Set(jp(sessionStorage.getItem(K.startModsSessionOff) || "[]", []));
+  const writeStartSessionOff = (set) => sessionStorage.setItem(K.startModsSessionOff, JSON.stringify(Array.from(set)));
 
   const syncLibFromEnabled = () => {
     const enabled = new Set(readEnabledMods());
@@ -799,7 +924,7 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
     for (const id of enabled) {
       const ex = map.get(id);
       if (ex) ex.enabled = true;
-      else map.set(id, { id, enabled: true, addedAt: now() });
+      else map.set(id, { id, enabled: true, addedAt: Date.now() });
     }
     const out = [];
     const seen = new Set();
@@ -810,14 +935,9 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
 
   const applyLibToEnabled = () => {
     const lib = readModLib();
-    writeEnabledMods(lib.filter(x => x.enabled).map(x => x.id));
-  };
-
-  const copyText = (t) => {
-    const s = String(t || "");
-    if (!s) return;
-    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(s).catch(() => prompt("Copy:", s));
-    else prompt("Copy:", s);
+    const off = readStartSessionOff();
+    const enabled = lib.filter(x => x.enabled && !off.has(x.id)).map(x => x.id);
+    writeEnabledMods(enabled);
   };
 
   const neoModsRead = () => jp(localStorage.getItem(K.neoMods) || "[]", []);
@@ -826,41 +946,80 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
   const neoSessionOffWrite = (set) => sessionStorage.setItem(K.neoModsSessionOff, JSON.stringify(Array.from(set)));
 
   const Neo = (window.NeoModLoader ||= {});
-  Neo.version = "3.5.0";
-  Neo.modules ||= new Map();
-  Neo.hooks ||= { ready: [], elements: [] };
+  Neo.version ||= "1.0.0";
+  Neo._hooks ||= { ready: [], elements: [], tick: [], draw: [], elementSelected: [] };
+  Neo._patches ||= [];
+  Neo._mods ||= new Map();
 
   Neo.on = (name, fn) => {
-    (Neo.hooks[name] ||= []).push(fn);
-    return () => { Neo.hooks[name] = (Neo.hooks[name] || []).filter(x => x !== fn); };
+    (Neo._hooks[name] ||= []).push(fn);
+    return () => { Neo._hooks[name] = (Neo._hooks[name] || []).filter(x => x !== fn); };
   };
-
   Neo.emit = (name, ...args) => {
-    const a = Neo.hooks[name] || [];
+    const a = Neo._hooks[name] || [];
     for (const fn of a) { try { fn(...args); } catch {} }
   };
-
   Neo.patch = (obj, key, wrap) => {
     if (!obj || !key || typeof wrap !== "function") return null;
     const old = obj[key];
     obj[key] = wrap(old);
-    return () => { obj[key] = old; };
+    const undo = () => { obj[key] = old; };
+    Neo._patches.push(undo);
+    return undo;
   };
-
+  Neo.refs = () => ({
+    elements: window.elements,
+    pixelMap: window.pixelMap,
+    currentPixels: window.currentPixels,
+    width: window.width,
+    height: window.height,
+    mouseX: window.mouseX,
+    mouseY: window.mouseY,
+    mouseSize: window.mouseSize,
+    paused: window.paused,
+    isEmpty: window.isEmpty,
+    tryMove: window.tryMove,
+    outOfBounds: window.outOfBounds,
+    createPixel: window.createPixel,
+    deletePixel: window.deletePixel,
+    changePixel: window.changePixel,
+    doDefaults: window.doDefaults,
+    settings: window.settings,
+  });
   Neo.element = (name, mut) => {
     if (!window.elements?.[name] || typeof mut !== "function") return false;
-    try { mut(window.elements[name]); return true; } catch { return false; }
+    try { mut(window.elements[name], Neo.refs()); return true; } catch { return false; }
   };
-
+  Neo.define = (name, factory) => {
+    const n = String(name || "").trim();
+    if (!n || typeof factory !== "function") return null;
+    if (Neo._mods.has(n)) return Neo._mods.get(n);
+    const mod = { name: n, enabled: false, enable() {}, disable() {} };
+    try {
+      const api = factory(Neo) || {};
+      if (typeof api.enable === "function") mod.enable = api.enable;
+      if (typeof api.disable === "function") mod.disable = api.disable;
+    } catch {}
+    Neo._mods.set(n, mod);
+    return mod;
+  };
+  Neo.enable = (name) => {
+    const m = Neo._mods.get(name);
+    if (!m || m.enabled) return false;
+    try { m.enable(); m.enabled = true; return true; } catch { return false; }
+  };
+  Neo.disable = (name) => {
+    const m = Neo._mods.get(name);
+    if (!m || !m.enabled) return false;
+    try { m.disable(); m.enabled = false; return true; } catch { return false; }
+  };
   Neo.load = (url, opts = {}) => new Promise((resolve, reject) => {
     const u = String(url || "").trim();
     if (!u) return reject(new Error("no url"));
     const off = neoSessionOffRead();
     if (off.has(u)) return reject(new Error("session disabled"));
-    const id = opts.id || `neoMod_${Math.random().toString(36).slice(2)}`;
-
+    const id = opts.id || `neo_${Math.random().toString(36).slice(2)}`;
     if (document.querySelector(`script[data-neo-mod="${CSS.escape(u)}"]`)) return resolve({ url: u, id, already: true });
-
     const s = document.createElement("script");
     s.src = u;
     s.async = true;
@@ -871,76 +1030,55 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
     document.head.appendChild(s);
   });
 
-  Neo.define = (name, factory) => {
-    const n = String(name || "").trim();
-    if (!n || typeof factory !== "function") return null;
-    if (Neo.modules.has(n)) return Neo.modules.get(n);
-    const mod = { name: n, enabled: false, enable() {}, disable() {} };
-    try {
-      const api = factory(Neo) || {};
-      if (typeof api.enable === "function") mod.enable = api.enable;
-      if (typeof api.disable === "function") mod.disable = api.disable;
-    } catch {}
-    Neo.modules.set(n, mod);
-    return mod;
-  };
+  const hookEngine = (() => {
+    let hooked = false;
+    const tryHook = () => {
+      if (hooked) return;
+      const cand = [
+        ["tick", "tick"],
+        ["doTick", "doTick"],
+        ["updateGame", "updateGame"],
+        ["draw", "draw"],
+        ["render", "render"]
+      ];
 
-  Neo.enable = (name) => {
-    const m = Neo.modules.get(name);
-    if (!m || m.enabled) return false;
-    try { m.enable(); m.enabled = true; return true; } catch { return false; }
-  };
-
-  Neo.disable = (name) => {
-    const m = Neo.modules.get(name);
-    if (!m || !m.enabled) return false;
-    try { m.disable(); m.enabled = false; return true; } catch { return false; }
-  };
-
-  const findModRoot = () => $("#modManager") || $("#modManagerScreen") || $("#modMenu") || $("#modMenuScreen");
-  const findModRows = (root) => {
-    if (!root) return [];
-    const checks = $$('input[type="checkbox"]', root);
-    const rows = new Set();
-    for (const cb of checks) {
-      const row = cb.closest("div, li, tr") || cb.parentElement;
-      if (row && row.textContent && row.textContent.trim()) rows.add(row);
-    }
-    return Array.from(rows).filter(x => x instanceof HTMLElement);
-  };
-
-  const improveModsBar = () => {
-    const s = loadSettings();
-    if (!s.enableNeoUI || !s.neoModsBar) return;
-    const root = findModRoot();
-    if (!root) return;
-    if ($("#neoModTools", root)) return;
-
-    const bar = el("div", { id: "neoModTools" },
-      el("input", { id: "neoModSearch", type: "text", placeholder: "Search mods…" }),
-      el("button", { class: "neoMiniBtn", onclick: () => { setOpenO(true); setTimeout(() => $("#neoModsWrap")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); } }, "Neo Mods"),
-      el("button", { class: "neoMiniBtn", onclick: () => setScale(readScale() + 0.06) }, "UI +"),
-      el("button", { class: "neoMiniBtn", onclick: () => setScale(readScale() - 0.06) }, "UI −"),
-      el("button", {
-        class: "neoMiniBtn",
-        onclick: () => { const i = $("#neoModSearch", root); i.value = ""; i.dispatchEvent(new Event("input")); }
-      }, "Clear")
-    );
-
-    root.prepend(bar);
-
-    const input = $("#neoModSearch", root);
-    input.addEventListener("input", () => {
-      const q = input.value.trim().toLowerCase();
-      const rows = findModRows(root);
-      for (const r of rows) {
-        const t = (r.textContent || "").toLowerCase();
-        r.style.display = (!q || t.includes(q)) ? "" : "none";
+      for (const [key] of cand) {
+        if (typeof window[key] === "function") {
+          if (window[key]._neoHooked) continue;
+          const orig = window[key];
+          const wrapped = function(...args) {
+            if (key === "tick" || key === "doTick" || key === "updateGame") Neo.emit("tick", Neo.refs());
+            if (key === "draw" || key === "render") Neo.emit("draw", Neo.refs());
+            return orig.apply(this, args);
+          };
+          wrapped._neoHooked = true;
+          window[key] = wrapped;
+          hooked = true;
+          break;
+        }
       }
-    });
-  };
+    };
+    return { tryHook };
+  })();
 
-  const watchModsMenu = () => setInterval(improveModsBar, 900);
+  const injectCreditTag = () => {
+    const want = /developed by\s*r74n/i;
+    let target = null;
+
+    const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let n;
+    while ((n = tw.nextNode())) {
+      const txt = (n.nodeValue || "").trim();
+      if (!txt) continue;
+      if (want.test(txt)) { target = n.parentElement; break; }
+      const p = n.parentElement;
+      if (p && want.test(p.textContent || "")) { target = p; break; }
+    }
+
+    if (!target) return;
+    if (target.querySelector?.(".neoCreditTag")) return;
+    target.appendChild(el("span", { class: "neoCreditTag" }, "modded by Playfullgamer"));
+  };
 
   const getTPS = () => {
     const keys = ["tps","TPS","tickSpeed","ticksPerSecond","targetTPS"];
@@ -954,27 +1092,25 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
     const n = clamp(Math.round(v), 1, 1000);
     localStorage.setItem(K.tps, String(n));
 
-    let applied = false;
     const keys = ["tps","TPS","tickSpeed","ticksPerSecond","targetTPS"];
     for (const k of keys) {
-      if (typeof window[k] === "number") { window[k] = n; applied = true; }
+      if (typeof window[k] === "number") window[k] = n;
     }
 
-    const ranges = $$('input[type="range"]');
-    for (const r of ranges) {
-      const p = r.parentElement;
-      const txt = (p?.textContent || "").toLowerCase();
-      if (txt.includes("tps")) {
-        try {
+    try {
+      const inputs = $$('input[type="range"]');
+      for (const r of inputs) {
+        const p = r.parentElement;
+        const t = (p?.textContent || "").toLowerCase();
+        if (t.includes("tps")) {
           r.value = String(n);
           r.dispatchEvent(new Event("input", { bubbles: true }));
           r.dispatchEvent(new Event("change", { bubbles: true }));
-          applied = true;
-        } catch {}
+        }
       }
-    }
+    } catch {}
 
-    toast(`TPS ${n}${applied ? "" : ""}`);
+    renderInfo();
   };
 
   const renderInfo = () => {
@@ -989,7 +1125,6 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
     const size = get("mouseSize","cursorSize","brushSize") ?? "-";
     const replace = get("replaceMode","replace","replacing");
     const paused = get("paused","isPaused","pause");
-    const tps = getTPS();
 
     const pill = $(".pill", info);
     if (!pill) return;
@@ -999,7 +1134,7 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
       <span><b>Size:</b> ${String(size)}</span>
       <span><b>Replace:</b> ${typeof replace === "boolean" ? (replace ? "On" : "Off") : String(replace ?? "-")}</span>
       <span><b>Paused:</b> ${typeof paused === "boolean" ? (paused ? "Yes" : "No") : String(paused ?? "-")}</span>
-      <span><b>TPS:</b> ${String(tps)}</span>
+      <span><b>TPS:</b> ${String(getTPS())}</span>
     `;
   };
 
@@ -1007,56 +1142,42 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
     const s = loadSettings();
     if (!s.smarterHumans) return;
 
-    if (!window.elements?.human) return;
-    const h = window.elements.human;
-    if (h._neoSmart) return;
+    const h = window.elements?.human;
+    if (!h || h._neoSmart) return;
+
     const orig = h.tick;
     if (typeof orig !== "function") return;
 
-    const danger = new Set(["fire","plasma","lava","acid","radiation","explosion","molten_iron","molten_steel","molten_glass","electric","electricity"]);
+    const danger = new Set(["fire","plasma","lava","acid","radiation","explosion","electric","electricity"]);
+
     h.tick = function(pixel) {
       try {
-        if (!pixel || typeof pixel.x !== "number") return orig(pixel);
-        const x = pixel.x, y = pixel.y;
         const pm = window.pixelMap;
         const isEmpty = window.isEmpty;
         const tryMove = window.tryMove;
         const outOfBounds = window.outOfBounds;
+        if (!pixel || !pm || !isEmpty || !tryMove || !outOfBounds) return orig(pixel);
 
-        if (pm && isEmpty && tryMove && outOfBounds) {
-          let dx = 0, dy = 0, found = false;
+        const x = pixel.x, y = pixel.y;
+        let dx = 0, dy = 0, found = false;
 
-          for (let ox = -1; ox <= 1; ox++) {
-            for (let oy = -1; oy <= 1; oy++) {
-              if (!ox && !oy) continue;
-              const nx = x + ox, ny = y + oy;
-              if (outOfBounds(nx, ny)) continue;
-              const p = pm[nx]?.[ny];
-              if (p && danger.has(p.element)) {
-                dx -= ox; dy -= oy;
-                found = true;
-              }
-            }
+        for (let ox = -1; ox <= 1; ox++) {
+          for (let oy = -1; oy <= 1; oy++) {
+            if (!ox && !oy) continue;
+            const nx = x + ox, ny = y + oy;
+            if (outOfBounds(nx, ny)) continue;
+            const p = pm[nx]?.[ny];
+            if (p && danger.has(p.element)) { dx -= ox; dy -= oy; found = true; }
           }
+        }
 
-          if (found) {
-            const ax = dx === 0 ? (Math.random() < 0.5 ? -1 : 1) : Math.sign(dx);
-            const ay = dy === 0 ? 0 : Math.sign(dy);
-
-            const moves = [
-              [x + ax, y],
-              [x + ax, y + ay],
-              [x, y + ay],
-              [x - ax, y],
-              [x - ax, y + ay]
-            ];
-
-            for (const [mx, my] of moves) {
-              if (outOfBounds(mx, my)) continue;
-              if (isEmpty(mx, my, true)) {
-                if (tryMove(pixel, mx, my)) return;
-              }
-            }
+        if (found) {
+          const ax = dx === 0 ? (Math.random() < 0.5 ? -1 : 1) : Math.sign(dx);
+          const ay = dy === 0 ? 0 : Math.sign(dy);
+          const moves = [[x + ax, y],[x + ax, y + ay],[x, y + ay],[x - ax, y],[x - ax, y + ay]];
+          for (const [mx, my] of moves) {
+            if (outOfBounds(mx, my)) continue;
+            if (isEmpty(mx, my, true) && tryMove(pixel, mx, my)) return;
           }
         }
       } catch {}
@@ -1069,9 +1190,6 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
   const buildUI = () => {
     if ($("#neoElements")) return;
 
-    document.body.classList.add("neoUI");
-    document.body.style.setProperty("--neoScale", String(readScale()));
-
     document.body.appendChild(el("div", { id: "neoOverlay", onclick: () => { setOpenE(false); setOpenO(false); } }));
     document.body.appendChild(el("div", { id: "neoEdgeL", onclick: () => setOpenE(true) }, el("span", { class: "lbl" }, "ELEMENTS"), el("span", { class: "sub" }, "☰")));
     document.body.appendChild(el("div", { id: "neoEdgeR", onclick: () => setOpenO(true) }, el("span", { class: "lbl" }, "SETTINGS"), el("span", { class: "sub" }, "⚙")));
@@ -1082,8 +1200,9 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
       el("div", { class: "neoHdr" },
         el("div", { class: "neoTitle" }, "Elements"),
         el("div", { class: "neoBtns" },
-          el("button", { class: "neoBtn", onclick: () => { localStorage.setItem(K.compact, isCompact() ? "0" : "1"); applyFlags(); renderElements(); } }, "▦"),
-          el("button", { class: "neoBtn", onclick: () => { localStorage.setItem(K.hideCats, isHideCats() ? "0" : "1"); applyFlags(); } }, "☰"),
+          el("button", { class: "neoBtn ghost", onclick: () => { localStorage.setItem(K.compact, isCompact() ? "0" : "1"); applyFlags(); renderElements(); } }, "▦"),
+          el("button", { class: "neoBtn ghost", onclick: () => { localStorage.setItem(K.hideCats, isHideCats() ? "0" : "1"); applyFlags(); } }, "☰"),
+          el("button", { class: "neoBtn ghost", onclick: () => { localStorage.setItem(K.favFirst, isFavFirst() ? "0" : "1"); renderElements(); } }, "★"),
           el("button", { class: "neoBtn", onclick: () => setMaxPanel("e", !isMax("e")) }, "⤢"),
           el("button", { class: "neoBtn", onclick: () => setOpenO(true) }, "⚙"),
           el("button", { class: "neoBtn", onclick: () => setOpenE(false) }, "×")
@@ -1105,7 +1224,7 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
             el("div", { id: "neoGridHead" },
               el("div", { id: "neoCount" }, ""),
               el("div", { style: "display:flex;gap:8px;align-items:center;" },
-                el("button", { class: "neoBtn", onclick: () => setOpenE(false) }, "Hide")
+                el("button", { class: "neoBtn ghost", onclick: () => setOpenE(false) }, "Hide")
               )
             ),
             el("div", { id: "neoGrid" })
@@ -1129,7 +1248,7 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
 
     document.body.append(elements, overhaul);
 
-    $("#neoSearch").addEventListener("input", () => renderElements());
+    $("#neoSearch")?.addEventListener("input", () => renderElements());
   };
 
   const addTopButtons = () => {
@@ -1152,14 +1271,16 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
 
   const panicReset = () => {
     localStorage.setItem(K.scale, "1.30");
-    localStorage.setItem(K.wE, "520");
-    localStorage.setItem(K.wO, "520");
+    localStorage.setItem(K.wE, "560");
+    localStorage.setItem(K.wO, "560");
     localStorage.setItem(K.maxE, "0");
     localStorage.setItem(K.maxO, "0");
     localStorage.setItem(K.openE, "1");
     localStorage.setItem(K.openO, "0");
     localStorage.setItem(K.hideCats, "0");
     localStorage.setItem(K.compact, "1");
+    localStorage.setItem(K.favFirst, "1");
+    localStorage.setItem(K.topLift, "10");
     document.body.style.setProperty("--neoScale", "1.30");
     $("#neoElements")?.classList.add("open");
     $("#neoOverhaul")?.classList.remove("open");
@@ -1173,246 +1294,10 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
     toast("Reset");
   };
 
-  const buildModsUI = (body) => {
-    const s = loadSettings();
-    if (!s.modsInOverhaul) return;
-
-    syncLibFromEnabled();
-
-    const wrap = el("div", { id: "neoModsWrap" },
-      el("div", { class: "neoSmall", style: "margin-bottom:10px;" }, `Startup mods need reload to fully apply.`),
-      el("div", { id: "neoModsTop" },
-        el("input", { id: "neoModsAdd", placeholder: "Add startup mods… ( ; separated )", type: "text" }),
-        el("button", { class: "neoBtn", onclick: () => modsAdd(false) }, "Add"),
-        el("button", { class: "neoBtn", onclick: () => modsAdd(true) }, "Add+Reload"),
-        el("button", { class: "neoBtn", onclick: () => location.reload() }, "Reload")
-      ),
-      el("div", { style: "display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;" },
-        el("input", { id: "neoModsFind", placeholder: "Search startup mods…", type: "text" }),
-        el("button", { class: "neoBtn", onclick: () => modsEnableAll(true) }, "Enable all"),
-        el("button", { class: "neoBtn", onclick: () => modsEnableAll(false) }, "Disable all"),
-        el("button", { class: "neoBtn", onclick: () => modsRemoveDisabled() }, "Remove disabled"),
-        el("button", { class: "neoBtn", onclick: () => copyText(JSON.stringify(readModLib())) }, "Export"),
-        el("button", { class: "neoBtn", onclick: () => modsImport() }, "Import")
-      ),
-      el("div", { id: "neoModsList" })
-    );
-
-    const neoWrap = el("div", { id: "neoModsWrap", style: "margin-top:12px;" },
-      el("div", { class: "neoSmall", style: "margin-bottom:10px;" }, `Neo Mod Loader loads mods live (no reload to add). Disabling can’t fully unload unless the mod supports it.`),
-      el("div", { id: "neoModsTop" },
-        el("input", { id: "neoNeoAdd", placeholder: "Load Neo mod URL…", type: "text" }),
-        el("button", { class: "neoBtn", onclick: () => neoAdd(true) }, "Load"),
-        el("button", { class: "neoBtn", onclick: () => neoSessionClear() }, "Clear session off")
-      ),
-      el("div", { style: "display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;" },
-        el("input", { id: "neoNeoFind", placeholder: "Search Neo mods…", type: "text" }),
-        el("button", { class: "neoBtn", onclick: () => neoExport() }, "Export"),
-        el("button", { class: "neoBtn", onclick: () => neoImport() }, "Import")
-      ),
-      el("div", { id: "neoNeoList" })
-    );
-
-    body.append(el("div", { class: "neoSection" }, "Mods"));
-    body.append(wrap);
-    body.append(el("div", { class: "neoSection" }, "Neo Mod Loader"));
-    body.append(neoWrap);
-
-    $("#neoModsFind")?.addEventListener("input", () => renderModsList());
-    $("#neoNeoFind")?.addEventListener("input", () => renderNeoList());
-    renderModsList();
-    renderNeoList();
-  };
-
-  const modsAdd = (doReload) => {
-    const input = $("#neoModsAdd");
-    if (!input) return;
-    const incoming = splitMods(input.value).filter(modLooks);
-    if (!incoming.length) return toast("No mods");
-    const lib = readModLib();
-    const map = new Map(lib.map(x => [x.id, x]));
-    for (const id of incoming) {
-      const ex = map.get(id);
-      if (ex) ex.enabled = true;
-      else map.set(id, { id, enabled: true, addedAt: now() });
-    }
-    const out = [];
-    const seen = new Set();
-    for (const x of lib) { out.push(map.get(x.id) || x); seen.add(x.id); }
-    for (const id of incoming) if (!seen.has(id)) out.push(map.get(id));
-    writeModLib(out);
-    applyLibToEnabled();
-    renderModsList();
-    toast(doReload ? "Reloading…" : "Added");
-    if (doReload) location.reload();
-  };
-
-  const modsEnableAll = (on) => {
-    writeModLib(readModLib().map(x => ({ ...x, enabled: !!on })));
-    applyLibToEnabled();
-    renderModsList();
-    toast(on ? "Enabled all" : "Disabled all");
-  };
-
-  const modsRemoveDisabled = () => {
-    writeModLib(readModLib().filter(x => x.enabled));
-    applyLibToEnabled();
-    renderModsList();
-    toast("Removed disabled");
-  };
-
-  const modsImport = async () => {
-    try {
-      const txt = navigator.clipboard?.readText ? await navigator.clipboard.readText() : "";
-      const v = jp(txt, null);
-      if (!Array.isArray(v)) return toast("Clipboard not JSON");
-      const lib = v
-        .filter(x => x && typeof x.id === "string")
-        .map(x => ({ id: x.id.trim(), enabled: !!x.enabled, addedAt: Number(x.addedAt || now()) }))
-        .filter(x => x.id && modLooks(x.id));
-      writeModLib(lib);
-      applyLibToEnabled();
-      renderModsList();
-      toast("Imported");
-    } catch {
-      toast("Clipboard blocked");
-    }
-  };
-
-  const renderModsList = () => {
-    const list = $("#neoModsList");
-    if (!list) return;
-
-    const q = ($("#neoModsFind")?.value || "").trim().toLowerCase();
-    const enabledSet = new Set(readEnabledMods());
-    let lib = readModLib();
-
-    if (q) lib = lib.filter(x => x.id.toLowerCase().includes(q));
-    lib.sort((a, b) => Number(b.enabled) - Number(a.enabled) || a.id.localeCompare(b.id));
-
-    list.innerHTML = "";
-    list.appendChild(el("div", { class: "neoSmall", style: "margin-top:10px;" }, `Saved ${readModLib().length} • Enabled ${readModLib().filter(x => x.enabled).length} • Key ${guessModsKey()}`));
-
-    for (const m of lib) {
-      const row = el("div", { class: "neoModsRow" });
-
-      const cb = el("input", {
-        type: "checkbox",
-        checked: m.enabled ? "checked" : null,
-        onchange: (ev) => {
-          writeModLib(readModLib().map(x => x.id === m.id ? { ...x, enabled: !!ev.target.checked } : x));
-          applyLibToEnabled();
-          renderModsList();
-          toast("Changed (reload)");
-        }
-      });
-
-      const badge = enabledSet.has(m.id)
-        ? el("span", { class: "neoBadge ok" }, "Enabled")
-        : el("span", { class: "neoBadge warn" }, "Reload");
-
-      row.append(
-        cb,
-        el("b", {}, m.id),
-        badge,
-        el("button", { class: "neoBtn", onclick: () => copyText(m.id) }, "Copy"),
-        el("button", {
-          class: "neoBtn",
-          onclick: () => {
-            writeModLib(readModLib().filter(x => x.id !== m.id));
-            applyLibToEnabled();
-            renderModsList();
-            toast("Removed (reload)");
-          }
-        }, "Remove")
-      );
-
-      list.appendChild(row);
-    }
-  };
-
-  const neoAdd = async () => {
-    const inp = $("#neoNeoAdd");
-    if (!inp) return;
-    const u = String(inp.value || "").trim();
-    if (!u) return toast("No URL");
-    const list = neoModsRead();
-    if (!list.includes(u)) { list.push(u); neoModsWrite(list); }
-    try {
-      await Neo.load(u);
-      toast("Loaded");
-    } catch (e) {
-      toast("Load blocked");
-    }
-    renderNeoList();
-  };
-
-  const neoExport = () => copyText(JSON.stringify(neoModsRead()));
-  const neoImport = async () => {
-    try {
-      const txt = navigator.clipboard?.readText ? await navigator.clipboard.readText() : "";
-      const v = jp(txt, null);
-      if (!Array.isArray(v)) return toast("Clipboard not JSON");
-      const list = v.map(x => String(x || "").trim()).filter(Boolean);
-      neoModsWrite(list);
-      toast("Imported");
-      renderNeoList();
-    } catch {
-      toast("Clipboard blocked");
-    }
-  };
-
-  const neoSessionClear = () => {
-    neoSessionOffWrite(new Set());
-    toast("Session off cleared");
-    renderNeoList();
-  };
-
-  const renderNeoList = () => {
-    const list = $("#neoNeoList");
-    if (!list) return;
-
-    const q = ($("#neoNeoFind")?.value || "").trim().toLowerCase();
-    let mods = neoModsRead().map(x => String(x || "").trim()).filter(Boolean);
-    if (q) mods = mods.filter(x => x.toLowerCase().includes(q));
-
-    const off = neoSessionOffRead();
-    list.innerHTML = "";
-    list.appendChild(el("div", { class: "neoSmall", style: "margin-top:10px;" }, `Saved ${neoModsRead().length} • Session off ${off.size}`));
-
-    for (const url of mods) {
-      const row = el("div", { class: "neoModsRow" });
-      const isOff = off.has(url);
-
-      const btnTemp = el("button", {
-        class: "neoBtn",
-        onclick: () => {
-          const set = neoSessionOffRead();
-          if (set.has(url)) set.delete(url); else set.add(url);
-          neoSessionOffWrite(set);
-          renderNeoList();
-          toast(set.has(url) ? "Session off" : "Session on");
-        }
-      }, isOff ? "Session Off" : "Session On");
-
-      row.append(
-        el("b", {}, url),
-        el("span", { class: `neoBadge ${isOff ? "warn" : "ok"}` }, isOff ? "Off" : "On"),
-        el("button", { class: "neoBtn", onclick: () => copyText(url) }, "Copy"),
-        el("button", { class: "neoBtn", onclick: () => Neo.load(url).then(() => toast("Loaded")).catch(() => toast("Load blocked")) }, "Load"),
-        btnTemp,
-        el("button", {
-          class: "neoBtn",
-          onclick: () => {
-            neoModsWrite(neoModsRead().filter(x => x !== url));
-            const set = neoSessionOffRead(); set.delete(url); neoSessionOffWrite(set);
-            renderNeoList();
-            toast("Removed");
-          }
-        }, "Remove")
-      );
-      list.appendChild(row);
-    }
+  const setPanelWidths = (we, wo) => {
+    localStorage.setItem(K.wE, String(clamp(Math.round(we), 340, 980)));
+    localStorage.setItem(K.wO, String(clamp(Math.round(wo), 340, 980)));
+    updateLayout();
   };
 
   const buildOverhaul = () => {
@@ -1421,6 +1306,7 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
     body.innerHTML = "";
 
     const s = loadSettings();
+
     const section = (t) => el("div", { class: "neoSection" }, t);
 
     const toggle = (key, title, desc, onChange) => {
@@ -1437,68 +1323,427 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
             liveApply();
           }
         }),
-        el("div", {},
-          el("div", { style: "font-weight:800;" }, title),
-          el("div", { class: "neoSmall" }, desc)
+        el("div", {}, el("div", { style: "font-weight:800;" }, title), el("div", { class: "neoSmall" }, desc))
+      );
+    };
+
+    const slider = (title, valueText, min, max, step, value, oninput) => {
+      return el("div", { class: "neoToggle", style: "cursor:default;" },
+        el("div", { style: "min-width:18px;" }),
+        el("div", { style: "width:100%;" },
+          el("div", { style: "font-weight:800;" }, `${title}: ${valueText}`),
+          el("div", { style: "display:flex; gap:10px; align-items:center; margin-top:10px;" },
+            el("input", {
+              type: "range",
+              min: String(min),
+              max: String(max),
+              step: String(step),
+              value: String(value),
+              style: "flex:1;",
+              oninput
+            })
+          )
         )
       );
     };
 
     body.append(section("UI"));
+    body.append(toggle("enableNeoUI", "Neo UI", "Master switch"));
+    body.append(toggle("neoElementsUI", "Elements panel", "Left panel"));
+    body.append(toggle("neoOverhaulUI", "Settings panel", "Right panel"));
+    body.append(toggle("neoModsBar", "Mods bar style", "Better mod menu top bar"));
+    body.append(toggle("neoInfoBar", "Info bar", "Small status pill"));
+    body.append(toggle("restyleTop", "Top bar style", "Smooth buttons"));
+    body.append(toggle("hideVanillaElements", "Hide vanilla elements UI", "Only when Elements panel is enabled"));
+    body.append(toggle("autoCloseOnPick", "Auto-close on pick", "Shift-click keeps it open"));
+    body.append(toggle("smarterHumans", "Smarter humans", "Avoid nearby danger"));
 
-    body.append(toggle("enableNeoUI", "Neo UI", "Master switch for Neo UI"));
-    body.append(toggle("neoElementsUI", "Neo Elements panel", "Elements drawer on the left"));
-    body.append(toggle("neoOverhaulUI", "Neo Settings panel", "Settings drawer on the right"));
-    body.append(toggle("neoModsBar", "Styled Mods bar", "Better search bar inside Mods menu"));
-    body.append(toggle("neoInfoBar", "Info bar", "Small status pill (non-clickable)"));
-    body.append(toggle("restyleTop", "Top bar style", "Smoother buttons"));
-    body.append(toggle("hideVanillaElements", "Hide vanilla elements UI", "Use Neo panel instead"));
-    body.append(toggle("autoCloseOnPick", "Auto-close elements", "Close after selecting"));
-    body.append(toggle("smarterHumans", "Smarter humans", "Avoid fire/acid/lava nearby"));
+    body.append(section("Size"));
+    body.append(slider("UI scale", readScale().toFixed(2), 1.0, 1.75, 0.02, readScale(), (ev) => setScale(parseFloat(ev.target.value))));
+    body.append(slider("Panel lift", `${readTopLift()}px`, 0, 28, 1, readTopLift(), (ev) => setTopLift(parseInt(ev.target.value, 10))));
 
-    body.append(section("Scale"));
+    const wE = desiredW(K.wE, 560);
+    const wO = desiredW(K.wO, 560);
+    body.append(section("Panel width"));
     body.append(
-      el("div", { class: "neoToggle", style: "cursor:default;" },
-        el("div", { style: "min-width:18px;" }),
-        el("div", { style: "width:100%;" },
-          el("div", { style: "font-weight:800;" }, `UI scale: ${readScale().toFixed(2)}`),
-          el("div", { style: "display:flex; gap:10px; align-items:center; margin-top:10px;" },
-            el("button", { class: "neoBtn", onclick: () => setScale(readScale() - 0.06) }, "–"),
-            el("input", {
-              type: "range", min: "1.0", max: "1.65", step: "0.02",
-              value: String(readScale()), style: "flex:1;",
-              oninput: (ev) => setScale(parseFloat(ev.target.value))
-            }),
-            el("button", { class: "neoBtn", onclick: () => setScale(readScale() + 0.06) }, "+")
-          )
+      el("div", { class: "neoCard" },
+        el("div", { class: "neoRow" },
+          el("span", { class: "neoSmall", style: "flex:1;" }, `Elements: ${wE}px • Settings: ${wO}px`)
+        ),
+        el("div", { class: "neoRow", style: "margin-top:10px;" },
+          el("input", {
+            type: "range", min: "340", max: "980", step: "10", value: String(wE),
+            style: "flex:1;",
+            oninput: (ev) => setPanelWidths(parseInt(ev.target.value, 10), desiredW(K.wO, 560))
+          }),
+          el("input", {
+            type: "range", min: "340", max: "980", step: "10", value: String(wO),
+            style: "flex:1;",
+            oninput: (ev) => setPanelWidths(desiredW(K.wE, 560), parseInt(ev.target.value, 10))
+          })
         )
       )
     );
 
     body.append(section("TPS"));
     body.append(
-      el("div", { class: "neoToggle", style: "cursor:default;" },
-        el("div", { style: "min-width:18px;" }),
-        el("div", { style: "width:100%;" },
-          el("div", { style: "font-weight:800;" }, `TPS: ${getTPS()}`),
-          el("div", { class: "neoSmall" }, "1 – 1000"),
-          el("div", { style: "display:flex; gap:10px; align-items:center; margin-top:10px;" },
-            el("button", { class: "neoBtn", onclick: () => setTPS(getTPS() - 10) }, "–10"),
-            el("input", {
-              type: "range", min: "1", max: "1000", step: "1",
-              value: String(getTPS()), style: "flex:1;",
-              oninput: (ev) => setTPS(parseInt(ev.target.value, 10))
-            }),
-            el("button", { class: "neoBtn", onclick: () => setTPS(getTPS() + 10) }, "+10")
-          )
+      el("div", { class: "neoCard" },
+        el("div", { class: "neoRow" },
+          el("span", { class: "neoSmall", style: "flex:1;" }, `TPS: ${getTPS()}`)
+        ),
+        el("div", { class: "neoRow", style: "margin-top:10px;" },
+          el("button", { class: "neoBtn", onclick: () => setTPS(getTPS() - 10) }, "–10"),
+          el("input", {
+            type: "range", min: "1", max: "1000", step: "1",
+            value: String(getTPS()),
+            style: "flex:1;",
+            oninput: (ev) => setTPS(parseInt(ev.target.value, 10))
+          }),
+          el("button", { class: "neoBtn", onclick: () => setTPS(getTPS() + 10) }, "+10")
         )
       )
     );
 
+    body.append(section("Mods"));
+
     buildModsUI(body);
 
+    body.append(section("Modding"));
+    body.append(
+      el("div", { class: "neoCard" },
+        el("div", { class: "neoSmall" }, "NeoModLoader is available for mods to hook game logic safely."),
+        el("div", { class: "neoRow", style: "margin-top:10px;" },
+          el("button", {
+            class: "neoBtn",
+            onclick: () => copyText(
+              [
+                "NeoModLoader.on('ready', fn)",
+                "NeoModLoader.on('tick', fn)",
+                "NeoModLoader.on('draw', fn)",
+                "NeoModLoader.refs()",
+                "NeoModLoader.patch(obj,'fn',wrap)",
+                "NeoModLoader.element('human', (h, refs)=>{ ... })",
+                "NeoModLoader.define('mod', Neo=>({ enable(){}, disable(){} }))"
+              ].join("\n")
+            )
+          }, "Copy API cheat sheet"),
+          el("button", { class: "neoBtn", onclick: () => copyText(JSON.stringify(Object.keys(Neo.refs()), null, 2)) }, "Copy refs list")
+        )
+      )
+    );
+
     body.append(section("Reset"));
-    body.append(el("button", { class: "neoBtn", onclick: () => panicReset() }, "Reset layout"));
+    body.append(
+      el("div", { class: "neoRow" },
+        el("button", { class: "neoBtn", onclick: () => panicReset() }, "Reset layout")
+      )
+    );
+  };
+
+  const buildModsUI = (body) => {
+    const s = loadSettings();
+    if (!s.modsInOverhaul) return;
+
+    syncLibFromEnabled();
+
+    const startCard = el("div", { class: "neoCard", id: "neoModsCard" },
+      el("div", { class: "neoRow" },
+        el("input", { id: "neoStartAdd", class: "neoInput", placeholder: "Startup mod URL(s) ; separated", type: "text" }),
+        el("button", { class: "neoBtn", onclick: () => startAdd(false) }, "Add"),
+        el("button", { class: "neoBtn", onclick: () => startAdd(true) }, "Add+Reload"),
+        el("button", { class: "neoBtn", onclick: () => location.reload() }, "Reload")
+      ),
+      el("div", { class: "neoRow", style: "margin-top:10px;" },
+        el("button", { class: "neoBtn ghost", onclick: () => startEnableAll(true) }, "Enable all"),
+        el("button", { class: "neoBtn ghost", onclick: () => startEnableAll(false) }, "Disable all"),
+        el("button", { class: "neoBtn ghost", onclick: () => startClearSessionOff() }, "Clear session-off"),
+        el("button", { class: "neoBtn ghost", onclick: () => startBackupPrompt() }, "Backup/Restore"),
+        el("span", { class: "neoSmall", style: "margin-left:auto;" }, "Startup mods apply on reload")
+      ),
+      el("div", { id: "neoStartList" })
+    );
+
+    const liveCard = el("div", { class: "neoCard", style: "margin-top:10px;" },
+      el("div", { class: "neoRow" },
+        el("input", { id: "neoLiveUrl", class: "neoInput", placeholder: "Live mod URL (loads now, no reload)", type: "text" }),
+        el("button", { class: "neoBtn", onclick: () => liveLoadNow() }, "Load now"),
+        el("button", { class: "neoBtn ghost", onclick: () => liveSaveOnly() }, "Save"),
+        el("button", { class: "neoBtn ghost", onclick: () => liveBackupPrompt() }, "Backup/Restore")
+      ),
+      el("div", { class: "neoRow", style: "margin-top:10px;" },
+        el("button", { class: "neoBtn ghost", onclick: () => liveLoadAllSaved() }, "Load saved"),
+        el("button", { class: "neoBtn ghost", onclick: () => liveClearSessionOff() }, "Clear session-off"),
+        el("span", { class: "neoSmall", style: "margin-left:auto;" }, "Session-off disables saved live mods this refresh")
+      ),
+      el("div", { id: "neoLiveList" })
+    );
+
+    body.append(startCard);
+    body.append(liveCard);
+
+    renderStartList();
+    renderLiveList();
+  };
+
+  const startAdd = (doReload) => {
+    const input = $("#neoStartAdd");
+    if (!input) return;
+    const incoming = splitMods(input.value).filter(modLooks);
+    if (!incoming.length) return toast("No mods");
+    const lib = readModLib();
+    const map = new Map(lib.map(x => [x.id, x]));
+    for (const id of incoming) {
+      const ex = map.get(id);
+      if (ex) ex.enabled = true;
+      else map.set(id, { id, enabled: true, addedAt: Date.now() });
+    }
+    const out = [];
+    const seen = new Set();
+    for (const x of lib) { out.push(map.get(x.id) || x); seen.add(x.id); }
+    for (const id of incoming) if (!seen.has(id)) out.push(map.get(id));
+    writeModLib(out);
+    applyLibToEnabled();
+    renderStartList();
+    toast(doReload ? "Reloading…" : "Added");
+    if (doReload) location.reload();
+  };
+
+  const startEnableAll = (on) => {
+    writeModLib(readModLib().map(x => ({ ...x, enabled: !!on })));
+    applyLibToEnabled();
+    renderStartList();
+    toast(on ? "Enabled all (reload)" : "Disabled all (reload)");
+  };
+
+  const startClearSessionOff = () => {
+    writeStartSessionOff(new Set());
+    applyLibToEnabled();
+    renderStartList();
+    toast("Cleared session-off (reload)");
+  };
+
+  const startBackupPrompt = () => {
+    const cur = readModLib();
+    copyText(JSON.stringify(cur, null, 2));
+    const txt = prompt("Backup/Restore Startup Mods (JSON)\n\nCopied current JSON to clipboard.\nPaste JSON here to restore (Cancel = do nothing).", "");
+    if (!txt) return;
+    const v = jp(txt, null);
+    if (!Array.isArray(v)) return toast("Bad JSON");
+    const lib = v
+      .filter(x => x && typeof x.id === "string")
+      .map(x => ({ id: x.id.trim(), enabled: !!x.enabled, addedAt: Number(x.addedAt || Date.now()) }))
+      .filter(x => x.id && modLooks(x.id));
+    writeModLib(lib);
+    applyLibToEnabled();
+    renderStartList();
+    toast("Restored (reload)");
+  };
+
+  const renderStartList = () => {
+    const list = $("#neoStartList");
+    if (!list) return;
+
+    const enabledSet = new Set(readEnabledMods());
+    const off = readStartSessionOff();
+
+    let lib = readModLib();
+    lib.sort((a, b) => Number(b.enabled) - Number(a.enabled) || a.id.localeCompare(b.id));
+
+    list.innerHTML = "";
+    const total = lib.length;
+    const enabled = lib.filter(x => x.enabled).length;
+    list.appendChild(el("div", { class: "neoSmall", style: "margin-top:10px;" }, `Saved ${total} • Enabled ${enabled} • Session-off ${off.size}`));
+
+    for (const m of lib) {
+      const row = el("div", { class: "neoRow", style: "margin-top:10px;" });
+
+      const cb = el("input", {
+        type: "checkbox",
+        checked: m.enabled ? "checked" : null,
+        onchange: (ev) => {
+          writeModLib(readModLib().map(x => x.id === m.id ? { ...x, enabled: !!ev.target.checked } : x));
+          applyLibToEnabled();
+          renderStartList();
+          toast("Changed (reload)");
+        }
+      });
+
+      const sessionBtn = el("button", { class: "neoBtn ghost" }, off.has(m.id) ? "Session off" : "Session on");
+      sessionBtn.onclick = () => {
+        const set = readStartSessionOff();
+        if (set.has(m.id)) set.delete(m.id); else set.add(m.id);
+        writeStartSessionOff(set);
+        applyLibToEnabled();
+        renderStartList();
+        toast("Reload to apply");
+      };
+
+      const badge = enabledSet.has(m.id) && !off.has(m.id)
+        ? el("span", { class: "neoBadge ok" }, "Enabled")
+        : el("span", { class: "neoBadge warn" }, "Reload");
+
+      row.append(
+        cb,
+        el("span", { style: "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" }, m.id),
+        badge,
+        sessionBtn,
+        el("button", { class: "neoBtn ghost", onclick: () => copyText(m.id) }, "Copy"),
+        el("button", {
+          class: "neoBtn ghost",
+          onclick: () => {
+            writeModLib(readModLib().filter(x => x.id !== m.id));
+            const set = readStartSessionOff(); set.delete(m.id); writeStartSessionOff(set);
+            applyLibToEnabled();
+            renderStartList();
+            toast("Removed (reload)");
+          }
+        }, "Remove")
+      );
+
+      list.appendChild(row);
+    }
+  };
+
+  const liveSaveOnly = () => {
+    const inp = $("#neoLiveUrl");
+    const u = String(inp?.value || "").trim();
+    if (!u) return toast("No URL");
+    if (!modLooks(u)) return toast("URL must be a .js mod");
+    const list = neoModsRead().map(x => String(x || "").trim()).filter(Boolean);
+    if (!list.includes(u)) list.push(u);
+    neoModsWrite(list);
+    renderLiveList();
+    toast("Saved");
+  };
+
+  const liveLoadNow = async () => {
+    const inp = $("#neoLiveUrl");
+    const u = String(inp?.value || "").trim();
+    if (!u) return toast("No URL");
+    if (!modLooks(u)) return toast("URL must be a .js mod");
+
+    try {
+      await Neo.load(u);
+      toast("Loaded");
+    } catch {
+      toast("Load blocked");
+    }
+  };
+
+  const liveBackupPrompt = () => {
+    const cur = neoModsRead();
+    copyText(JSON.stringify(cur, null, 2));
+    const txt = prompt("Backup/Restore Live Mods (JSON array)\n\nCopied current JSON to clipboard.\nPaste JSON here to restore (Cancel = do nothing).", "");
+    if (!txt) return;
+    const v = jp(txt, null);
+    if (!Array.isArray(v)) return toast("Bad JSON");
+    const list = v.map(x => String(x || "").trim()).filter(Boolean).filter(modLooks);
+    neoModsWrite(list);
+    renderLiveList();
+    toast("Restored");
+  };
+
+  const liveLoadAllSaved = async () => {
+    const list = neoModsRead().map(x => String(x || "").trim()).filter(Boolean).filter(modLooks);
+    if (!list.length) return toast("No saved live mods");
+    const off = neoSessionOffRead();
+    let ok = 0, fail = 0, skip = 0;
+    for (const u of list) {
+      if (off.has(u)) { skip++; continue; }
+      try { await Neo.load(u); ok++; } catch { fail++; }
+    }
+    toast(`Loaded ${ok}${skip ? ` • skipped ${skip}` : ""}${fail ? ` • failed ${fail}` : ""}`);
+  };
+
+  const liveClearSessionOff = () => {
+    neoSessionOffWrite(new Set());
+    renderLiveList();
+    toast("Cleared session-off");
+  };
+
+  const renderLiveList = () => {
+    const list = $("#neoLiveList");
+    if (!list) return;
+
+    const saved = neoModsRead().map(x => String(x || "").trim()).filter(Boolean).filter(modLooks);
+    const off = neoSessionOffRead();
+
+    list.innerHTML = "";
+    list.appendChild(el("div", { class: "neoSmall", style: "margin-top:10px;" }, `Saved ${saved.length} • Session-off ${off.size}`));
+
+    for (const url of saved) {
+      const row = el("div", { class: "neoRow", style: "margin-top:10px;" });
+
+      const badge = off.has(url)
+        ? el("span", { class: "neoBadge warn" }, "Off")
+        : el("span", { class: "neoBadge ok" }, "On");
+
+      const sessionBtn = el("button", { class: "neoBtn ghost" }, off.has(url) ? "Enable" : "Session off");
+      sessionBtn.onclick = () => {
+        const set = neoSessionOffRead();
+        if (set.has(url)) set.delete(url); else set.add(url);
+        neoSessionOffWrite(set);
+        renderLiveList();
+        toast(set.has(url) ? "Session off" : "Enabled");
+      };
+
+      row.append(
+        el("span", { style: "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" }, url),
+        badge,
+        el("button", { class: "neoBtn ghost", onclick: () => Neo.load(url).then(() => toast("Loaded")).catch(() => toast("Load blocked")) }, "Load"),
+        sessionBtn,
+        el("button", { class: "neoBtn ghost", onclick: () => copyText(url) }, "Copy"),
+        el("button", {
+          class: "neoBtn ghost",
+          onclick: () => {
+            neoModsWrite(neoModsRead().filter(x => String(x || "").trim() !== url));
+            const set = neoSessionOffRead(); set.delete(url); neoSessionOffWrite(set);
+            renderLiveList();
+            toast("Removed");
+          }
+        }, "Remove")
+      );
+
+      list.appendChild(row);
+    }
+  };
+
+  const liveAutoLoadSaved = async () => {
+    const saved = neoModsRead().map(x => String(x || "").trim()).filter(Boolean).filter(modLooks);
+    if (!saved.length) return;
+    const off = neoSessionOffRead();
+    for (const url of saved) {
+      if (off.has(url)) continue;
+      try { await Neo.load(url); } catch {}
+    }
+  };
+
+  const selectHook = () => {
+    if (typeof window.selectElement !== "function") return;
+    if (window.selectElement._neoHooked) return;
+    const orig = window.selectElement;
+    const wrapped = function(name, ...rest) {
+      try { Neo.emit("elementSelected", name, Neo.refs()); } catch {}
+      return orig.call(this, name, ...rest);
+    };
+    wrapped._neoHooked = true;
+    window.selectElement = wrapped;
+  };
+
+  const ensureDefaults = () => {
+    const s = loadSettings();
+    if (localStorage.getItem(K.scale) == null) localStorage.setItem(K.scale, String(s.scale));
+    if (localStorage.getItem(K.topLift) == null) localStorage.setItem(K.topLift, String(s.topLift));
+    if (localStorage.getItem(K.openE) == null) localStorage.setItem(K.openE, s.openElementsOnStart ? "1" : "0");
+    if (localStorage.getItem(K.openO) == null) localStorage.setItem(K.openO, "0");
+    if (localStorage.getItem(K.wE) == null) localStorage.setItem(K.wE, "560");
+    if (localStorage.getItem(K.wO) == null) localStorage.setItem(K.wO, "560");
+    if (localStorage.getItem(K.maxE) == null) localStorage.setItem(K.maxE, "0");
+    if (localStorage.getItem(K.maxO) == null) localStorage.setItem(K.maxO, "0");
+    if (localStorage.getItem(K.compact) == null) localStorage.setItem(K.compact, s.compact ? "1" : "0");
+    if (localStorage.getItem(K.hideCats) == null) localStorage.setItem(K.hideCats, s.hideCats ? "1" : "0");
+    if (localStorage.getItem(K.favFirst) == null) localStorage.setItem(K.favFirst, s.favFirst ? "1" : "0");
+    if (localStorage.getItem(K.tps) == null) localStorage.setItem(K.tps, String(getTPS()));
   };
 
   const liveApply = () => {
@@ -1508,27 +1753,24 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
     document.body.classList.toggle("neoTopStyle", !!(s.enableNeoUI && s.restyleTop));
     document.body.classList.toggle("neoHideVanilla", !!(s.enableNeoUI && s.neoElementsUI && s.hideVanillaElements));
 
-    if (localStorage.getItem(K.compact) == null) localStorage.setItem(K.compact, s.compact ? "1" : "0");
-    if (localStorage.getItem(K.hideCats) == null) localStorage.setItem(K.hideCats, s.hideCats ? "1" : "0");
-    if (localStorage.getItem(K.scale) == null) localStorage.setItem(K.scale, String(s.scale));
-    if (localStorage.getItem(K.tps) == null) localStorage.setItem(K.tps, String(getTPS()));
+    applyFlags();
 
-    document.body.style.setProperty("--neoScale", String(readScale()));
+    const showE = !!(s.enableNeoUI && s.neoElementsUI);
+    const showO = !!(s.enableNeoUI && s.neoOverhaulUI);
 
-    $("#neoEdgeL")?.classList.toggle("hidden", !(s.enableNeoUI && s.neoElementsUI) || isOpenE());
-    $("#neoEdgeR")?.classList.toggle("hidden", !(s.enableNeoUI && s.neoOverhaulUI) || isOpenO());
+    $("#neoElements")?.classList.toggle("open", showE && isOpenE());
+    $("#neoOverhaul")?.classList.toggle("open", showO && isOpenO());
 
-    if (!s.enableNeoUI || !s.neoElementsUI) {
-      $("#neoElements")?.classList.remove("open");
-      localStorage.setItem(K.openE, "0");
-    }
-    if (!s.enableNeoUI || !s.neoOverhaulUI) {
-      $("#neoOverhaul")?.classList.remove("open");
-      localStorage.setItem(K.openO, "0");
-    }
+    if (!showE) localStorage.setItem(K.openE, "0");
+    if (!showO) localStorage.setItem(K.openO, "0");
+
+    $("#neoElements")?.style && ($("#neoElements").style.display = showE ? "" : "none");
+    $("#neoOverhaul")?.style && ($("#neoOverhaul").style.display = showO ? "" : "none");
+    $("#neoOverlay")?.style && ($("#neoOverlay").style.display = (showE || showO) ? "" : "none");
+    $("#neoEdgeL")?.style && ($("#neoEdgeL").style.display = showE ? "" : "none");
+    $("#neoEdgeR")?.style && ($("#neoEdgeR").style.display = showO ? "" : "none");
 
     addTopButtons();
-    applyFlags();
     buildOverhaul();
     updateTop();
     updateLayout();
@@ -1537,19 +1779,9 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
     improveModsBar();
     renderInfo();
     smarterHumansPatch();
-  };
-
-  const ensureDefaults = () => {
-    const s = loadSettings();
-    if (localStorage.getItem(K.scale) == null) localStorage.setItem(K.scale, String(s.scale));
-    if (localStorage.getItem(K.openE) == null) localStorage.setItem(K.openE, s.openElementsOnStart ? "1" : "0");
-    if (localStorage.getItem(K.openO) == null) localStorage.setItem(K.openO, "0");
-    if (localStorage.getItem(K.wE) == null) localStorage.setItem(K.wE, "520");
-    if (localStorage.getItem(K.wO) == null) localStorage.setItem(K.wO, "520");
-    if (localStorage.getItem(K.maxE) == null) localStorage.setItem(K.maxE, "0");
-    if (localStorage.getItem(K.maxO) == null) localStorage.setItem(K.maxO, "0");
-    if (localStorage.getItem(K.compact) == null) localStorage.setItem(K.compact, s.compact ? "1" : "0");
-    if (localStorage.getItem(K.hideCats) == null) localStorage.setItem(K.hideCats, s.hideCats ? "1" : "0");
+    selectHook();
+    hookEngine.tryHook();
+    injectCreditTag();
   };
 
   const installHotkeys = () => {
@@ -1584,47 +1816,59 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(12
     try { await waitFor(() => window.elements && Object.keys(window.elements).length > 20); } catch {}
 
     ensureDefaults();
-    css("neoStyle", styleText());
-    buildUI();
 
-    document.body.classList.add("neoUI");
+    css("neoStyle", styleText());
+
     document.body.style.setProperty("--neoScale", String(readScale()));
+
+    buildUI();
 
     $("#neoElements")?.classList.toggle("open", isOpenE());
     $("#neoOverhaul")?.classList.toggle("open", isOpenO());
     $("#neoElements")?.classList.toggle("neoDrawerMax", isMax("e"));
     $("#neoOverhaul")?.classList.toggle("neoDrawerMax", isMax("o"));
 
-    $("#neoOverlay")?.addEventListener("click", () => { setOpenE(false); setOpenO(false); });
-
     const s = loadSettings();
+    document.body.classList.add("neoUI");
     document.body.classList.toggle("neoTopStyle", !!(s.enableNeoUI && s.restyleTop));
     document.body.classList.toggle("neoHideVanilla", !!(s.enableNeoUI && s.neoElementsUI && s.hideVanillaElements));
 
     addTopButtons();
     applyFlags();
     buildOverhaul();
+
     updateTop();
     updateLayout();
 
     renderCats();
     setTab(tab);
     renderElements();
+
     improveModsBar();
     renderInfo();
+    setTPS(getTPS());
 
-    try { setTPS(getTPS()); } catch {}
+    syncLibFromEnabled();
+    applyLibToEnabled();
 
-    smarterHumansPatch();
+    try { await liveAutoLoadSaved(); } catch {}
+
     installHotkeys();
     watchModsMenu();
 
+    selectHook();
+    hookEngine.tryHook();
+
+    injectCreditTag();
+    setInterval(injectCreditTag, 1500);
+
     window.addEventListener("resize", () => { updateTop(); updateLayout(); });
-    setInterval(() => { updateTop(); updateLayout(); renderInfo(); }, 900);
+    setInterval(() => { updateTop(); updateLayout(); renderInfo(); hookEngine.tryHook(); }, 900);
 
-    Neo.emit("ready");
+    Neo.version = "1.1.0";
     Neo.emit("elements", window.elements);
+    Neo.emit("ready");
 
-    toast(`Neo UI+ ${Neo.version}`);
+    toast("Neo UI+ loaded");
   });
 })();
