@@ -1,0 +1,853 @@
+/* Ant Colony Mod for Sandboxels
+   - New category: "Ant Colony"
+   - Queen lays eggs; brood develops (egg -> larva -> pupa -> worker/soldier)
+   - Workers forage, follow pheromones, feed brood/queen, expand nest
+   - Soldiers defend
+   - Pheromones stored as properties on substrate pixels (nest/soil) with decay
+*/
+
+(() => {
+  // Run safely after the game loads
+  if (typeof runAfterLoad !== "function") return;
+  runAfterLoad(() => {
+    // Prevent double-loading
+    if (elements?.colony_ant_worker || elements?.colony_ant_queen) return;
+
+    const MOD = "Ant Colony";
+    const g = (typeof window !== "undefined" ? window : globalThis);
+
+    // Global sim state (supports multiple colonies)
+    if (!g.__ANT_COLONY_SIM__) {
+      g.__ANT_COLONY_SIM__ = {
+        nextId: 1,
+        colonies: Object.create(null),
+      };
+    }
+    const SIM = g.__ANT_COLONY_SIM__;
+
+    // ---------- small utils ----------
+    const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+    const randInt = (a, b) => (a + Math.floor(Math.random() * (b - a + 1)));
+    const manhattan = (x1, y1, x2, y2) => Math.abs(x1 - x2) + Math.abs(y1 - y2);
+
+    const DIRS4 = [
+      { dx: 1, dy: 0 },  // E
+      { dx: -1, dy: 0 }, // W
+      { dx: 0, dy: 1 },  // S
+      { dx: 0, dy: -1 }, // N
+    ];
+
+    const DIRS8 = [
+      { dx: 1, dy: 0 }, { dx: -1, dy: 0 }, { dx: 0, dy: 1 }, { dx: 0, dy: -1 },
+      { dx: 1, dy: 1 }, { dx: -1, dy: 1 }, { dx: 1, dy: -1 }, { dx: -1, dy: -1 },
+    ];
+
+    const SAFE_GET = (x, y) => (outOfBounds(x, y) ? null : pixelMap[x][y]);
+
+    function registerElement(key, def) {
+      // addElement exists in modern Sandboxels builds; fallback is direct assignment
+      if (typeof addElement === "function") addElement(key, def);
+      else elements[key] = def;
+    }
+
+    function colonyGet(id) {
+      if (!SIM.colonies[id]) {
+        SIM.colonies[id] = {
+          id,
+          food: 8,               // colony food units
+          homeX: null,
+          homeY: null,
+          danger: 0,             // rises when enemies detected
+          lastCleanupTick: 0,
+          lastInfoTick: 0,
+        };
+      }
+      return SIM.colonies[id];
+    }
+
+    // ---------- pheromones stored on substrate pixels ----------
+    // We keep "food trail" and "home trail" separately, with lazy decay.
+    const PH_DECAY = 0.992;       // decay per tick (lazy-applied)
+    const PH_MAX = 14;            // clamp
+    const PH_UPDATE_EVERY = 40;   // how often we rewrite decayed value into pixel props
+
+    function phKeys(kind) {
+      // kind: "food" or "home"
+      return (kind === "food")
+        ? { v: "_antPhF_v", t: "_antPhF_t" }
+        : { v: "_antPhH_v", t: "_antPhH_t" };
+    }
+
+    function phGet(subPixel, kind) {
+      if (!subPixel) return 0;
+      const { v, t } = phKeys(kind);
+      let val = (typeof subPixel[v] === "number") ? subPixel[v] : 0;
+      if (val <= 0) return 0;
+
+      const last = (typeof subPixel[t] === "number") ? subPixel[t] : pixelTicks;
+      const age = pixelTicks - last;
+      if (age <= 0) return val;
+
+      const decayed = val * Math.pow(PH_DECAY, age);
+
+      // occasionally rewrite (prevents numbers from getting stale/huge ages)
+      if (age >= PH_UPDATE_EVERY) {
+        subPixel[v] = decayed;
+        subPixel[t] = pixelTicks;
+        return (decayed < 0.02 ? 0 : decayed);
+      }
+      return (decayed < 0.02 ? 0 : decayed);
+    }
+
+    function phAdd(subPixel, kind, amount) {
+      if (!subPixel) return;
+      const { v, t } = phKeys(kind);
+      const nowVal = phGet(subPixel, kind);
+      const nextVal = clamp(nowVal + amount, 0, PH_MAX);
+      subPixel[v] = nextVal;
+      subPixel[t] = pixelTicks;
+    }
+
+    function substratePixelAt(x, y) {
+      // We store pheromones on nest pixels and diggable ground pixels.
+      const p = SAFE_GET(x, y);
+      if (!p) return null;
+      const e = elements[p.element];
+      if (!e) return null;
+
+      if (p.element === "colony_ant_nest") return p;
+
+      // "diggable ground" heuristic: land/powders that aren't liquids/gases
+      const cat = e.category;
+      const st = e.state;
+      if ((cat === "land" || cat === "powders" || cat === "solids") && st !== "liquid" && st !== "gas") return p;
+
+      // common ground names fallback (helps even if category differs)
+      const nm = p.element;
+      if (nm.includes("dirt") || nm.includes("sand") || nm.includes("soil") || nm.includes("clay") || nm.includes("gravel") || nm.includes("mud")) return p;
+
+      return null;
+    }
+
+    // ---------- food & enemies ----------
+    function isFoodElementName(name) {
+      if (!name) return false;
+      if (name === "colony_ant_food_pellet") return true;
+      const e = elements[name];
+      if (!e) return false;
+      if (e.category === "food") return true;
+
+      // extra heuristics
+      if (name.includes("meat") || name.includes("fruit") || name.includes("seed") || name.includes("bread") || name.includes("sugar")) return true;
+      if (name === "dead_bug" || name === "dead_plant" || name === "plant" || name === "grass") return true;
+      return false;
+    }
+
+    function isEnemyPixel(p, colonyId) {
+      if (!p) return false;
+      const el = p.element;
+      if (el.startsWith("colony_ant_")) return false;
+      // treat animals as potential enemies (if list exists)
+      if (typeof eLists === "object" && Array.isArray(eLists.ANIMAL) && eLists.ANIMAL.includes(el)) return true;
+      // fallback: common hostile-ish names
+      if (el.includes("worm") || el.includes("ant") || el.includes("bug") || el.includes("spider")) return true;
+      return false;
+    }
+
+    // ---------- nest detection ----------
+    function countNearbyNest(x, y, r = 1) {
+      let c = 0;
+      for (let dx = -r; dx <= r; dx++) {
+        for (let dy = -r; dy <= r; dy++) {
+          if (!dx && !dy) continue;
+          const p = SAFE_GET(x + dx, y + dy);
+          if (p && p.element === "colony_ant_nest") c++;
+        }
+      }
+      return c;
+    }
+
+    function isInsideNestArea(pixel) {
+      // heuristic: if surrounded by nest pixels, you're "inside"
+      return countNearbyNest(pixel.x, pixel.y, 1) >= 3;
+    }
+
+    // ---------- movement ----------
+    function tryAntMove(pixel, nx, ny, leaveBehindNest) {
+      if (outOfBounds(nx, ny)) return false;
+      // If leaving behind nest, we "force" through (use tryMove's force param)
+      // This lets ants travel through nest/ground like a tunnel system.
+      if (leaveBehindNest) {
+        return tryMove(pixel, nx, ny, "colony_ant_nest", true);
+      }
+      return tryMove(pixel, nx, ny);
+    }
+
+    function pickMove(pixel, colony, mode) {
+      // mode: "forage" | "return" | "patrol" | "nurse" | "dig"
+      const inside = isInsideNestArea(pixel);
+      const leaveNest = inside || mode === "dig";
+
+      const lastDx = (typeof pixel._antLastDx === "number") ? pixel._antLastDx : 0;
+      const lastDy = (typeof pixel._antLastDy === "number") ? pixel._antLastDy : 0;
+
+      // Candidate dirs: prefer continuing direction, then slight turns, then others
+      const dirs = DIRS8.slice();
+      dirs.sort((a, b) => {
+        const ia = (a.dx === lastDx && a.dy === lastDy) ? -2 : 0;
+        const ib = (b.dx === lastDx && b.dy === lastDy) ? -2 : 0;
+        return ia - ib;
+      });
+
+      let best = null;
+      let bestScore = -1e9;
+
+      for (const d of dirs) {
+        const nx = pixel.x + d.dx;
+        const ny = pixel.y + d.dy;
+        if (outOfBounds(nx, ny)) continue;
+
+        const tgt = SAFE_GET(nx, ny);
+
+        // base: prefer open cells, allow nest/ground travel if "inside"
+        let canGo = false;
+        let moveType = "move";
+        if (!tgt) {
+          canGo = true;
+        } else if (tgt.element === "colony_ant_nest") {
+          canGo = true;
+        } else if (isFoodElementName(tgt.element) && (pixel._antCarryFood ?? 0) <= 0 && mode !== "return") {
+          // don't "move" into food; we'll interact
+          canGo = true;
+          moveType = "food";
+        } else if (mode === "dig") {
+          // allow digging into ground-ish pixels
+          const te = elements[tgt.element];
+          if (te && (te.category === "land" || te.category === "powders" || te.category === "solids") && te.state !== "liquid" && te.state !== "gas") {
+            canGo = true;
+            moveType = "dig";
+          }
+        } else if (mode === "patrol" || mode === "return") {
+          // allow stepping through soft ground (simulating tight tunnels)
+          const te = elements[tgt.element];
+          if (te && (te.category === "land" || te.category === "powders") && te.state !== "liquid" && te.state !== "gas") {
+            canGo = inside; // only if already inside nest region
+            moveType = inside ? "move" : "blocked";
+          }
+        }
+
+        if (!canGo) continue;
+
+        // scoring
+        let score = Math.random() * 0.25;
+
+        // inertia
+        if (d.dx === lastDx && d.dy === lastDy) score += 0.25;
+
+        // thigmotaxis (wall-following): prefer positions near solid things
+        let wallCount = 0;
+        for (const dd of DIRS4) {
+          const ap = SAFE_GET(nx + dd.dx, ny + dd.dy);
+          if (ap && elements[ap.element]?.state === "solid") wallCount++;
+        }
+        score += wallCount * 0.03;
+
+        // avoid liquids/gases if possible
+        if (tgt && (elements[tgt.element]?.state === "liquid" || elements[tgt.element]?.state === "gas")) score -= 0.4;
+
+        // pheromone following + homing
+        const sub = substratePixelAt(nx, ny);
+        const subHere = substratePixelAt(pixel.x, pixel.y);
+
+        const phFood = phGet(sub, "food");
+        const phHome = phGet(sub, "home");
+        const phFoodHere = phGet(subHere, "food");
+        const phHomeHere = phGet(subHere, "home");
+
+        if (mode === "forage") {
+          // outbound: prefer food trail, but also explore
+          score += (phFood - phFoodHere) * 0.20;
+          score -= (phHome - phHomeHere) * 0.05;
+        } else if (mode === "return") {
+          // inbound: prefer home cues & geometry
+          score += (phHome - phHomeHere) * 0.22;
+          score -= (phFood - phFoodHere) * 0.04;
+
+          if (typeof colony.homeX === "number" && typeof colony.homeY === "number") {
+            const dNow = manhattan(pixel.x, pixel.y, colony.homeX, colony.homeY);
+            const dNext = manhattan(nx, ny, colony.homeX, colony.homeY);
+            score += (dNow - dNext) * 0.06;
+          }
+        } else if (mode === "nurse") {
+          // stay near nest core
+          score += phHome * 0.06;
+          if (typeof colony.homeX === "number" && typeof colony.homeY === "number") {
+            score += (10 - manhattan(nx, ny, colony.homeX, colony.homeY)) * 0.02;
+          }
+        } else if (mode === "dig") {
+          // prefer expanding outward from core a little
+          if (typeof colony.homeX === "number" && typeof colony.homeY === "number") {
+            const dNext = manhattan(nx, ny, colony.homeX, colony.homeY);
+            score += (dNext >= 5 && dNext <= 16) ? 0.25 : -0.05;
+          }
+        } else if (mode === "patrol") {
+          score += colony.danger * 0.02;
+        }
+
+        if (moveType === "food") score += 0.4; // grabbing food is rewarding
+        if (moveType === "dig") score += 0.2;
+
+        // avoid stacking on other ants
+        if (tgt && tgt.element.startsWith("colony_ant_")) score -= 0.8;
+
+        if (score > bestScore) {
+          bestScore = score;
+          best = { nx, ny, d, moveType, leaveNest };
+        }
+      }
+
+      return best;
+    }
+
+    // ---------- brood lifecycle ----------
+    function broodTick(pixel, stage) {
+      doDefaults(pixel);
+
+      if (pixel.temp < -5 || pixel.temp > 60) {
+        changePixel(pixel, "colony_ant_corpse");
+        return;
+      }
+
+      // attach colony id if missing (brood should belong to local nest if any)
+      if (typeof pixel._antColonyId !== "number") {
+        // try find nearby ant
+        let found = null;
+        for (const d of DIRS8) {
+          const p = SAFE_GET(pixel.x + d.dx, pixel.y + d.dy);
+          if (p && p.element.startsWith("colony_ant_") && typeof p._antColonyId === "number") {
+            found = p._antColonyId; break;
+          }
+        }
+        pixel._antColonyId = (typeof found === "number") ? found : 1;
+      }
+      const colony = colonyGet(pixel._antColonyId);
+
+      const age = pixelTicks - pixel.start;
+      pixel._antBroodFood = (typeof pixel._antBroodFood === "number") ? pixel._antBroodFood : 0;
+
+      if (stage === "egg") {
+        // eggs hatch over time (faster if warm but not hot)
+        const hatchAt = 1800 - Math.floor(clamp(pixel.temp, 15, 35) - 15) * 18; // mild temp effect
+        if (age >= hatchAt) {
+          changePixel(pixel, "colony_ant_larva");
+          pixel._antColonyId = colony.id;
+          pixel._antBroodFood = 0;
+        }
+      } else if (stage === "larva") {
+        // larvae need feeding before pupating
+        const need = 4;
+        if (pixel._antBroodFood >= need && age >= 2200) {
+          changePixel(pixel, "colony_ant_pupa");
+          pixel._antColonyId = colony.id;
+          pixel._antBroodFood = 0;
+          pixel.start = pixelTicks;
+        }
+      } else if (stage === "pupa") {
+        // pupae become workers or soldiers based on danger and "random colony need"
+        if (age >= 2600) {
+          const makeSoldier = (colony.danger >= 3 && Math.random() < 0.65) || (Math.random() < 0.18);
+          changePixel(pixel, makeSoldier ? "colony_ant_soldier" : "colony_ant_worker");
+          pixel._antColonyId = colony.id;
+        }
+      }
+    }
+
+    // ---------- ant AI ----------
+    function ensureAnt(pixel, role) {
+      if (typeof pixel._antColonyId !== "number") {
+        pixel._antColonyId = SIM.nextId++; // new colony by default
+      }
+      pixel._antRole = role;
+
+      pixel._antEnergy = (typeof pixel._antEnergy === "number") ? pixel._antEnergy : 1.0;
+      pixel._antCarryFood = (typeof pixel._antCarryFood === "number") ? pixel._antCarryFood : 0;
+      pixel._antTask = (typeof pixel._antTask === "string") ? pixel._antTask : (role === "soldier" ? "patrol" : "forage");
+      pixel._antLastDx = (typeof pixel._antLastDx === "number") ? pixel._antLastDx : randInt(-1, 1);
+      pixel._antLastDy = (typeof pixel._antLastDy === "number") ? pixel._antLastDy : randInt(-1, 1);
+
+      // queen-only
+      if (role === "queen") {
+        pixel._antEggCooldown = (typeof pixel._antEggCooldown === "number") ? pixel._antEggCooldown : 0;
+      }
+
+      return colonyGet(pixel._antColonyId);
+    }
+
+    function feedNearbyBroodOrQueen(pixel, colony) {
+      if ((pixel._antCarryFood ?? 0) <= 0) return false;
+
+      for (const d of DIRS8) {
+        const p = SAFE_GET(pixel.x + d.dx, pixel.y + d.dy);
+        if (!p) continue;
+
+        // feed queen directly (she converts food into eggs)
+        if (p.element === "colony_ant_queen" && p._antColonyId === colony.id) {
+          const give = Math.min(2, pixel._antCarryFood);
+          pixel._antCarryFood -= give;
+          colony.food += give;
+          p._antEnergy = clamp((p._antEnergy ?? 1) + 0.10, 0, 1.2);
+          return true;
+        }
+
+        // feed larvae
+        if (p.element === "colony_ant_larva" && p._antColonyId === colony.id) {
+          p._antBroodFood = (typeof p._antBroodFood === "number") ? p._antBroodFood : 0;
+          p._antBroodFood += 1;
+          pixel._antCarryFood -= 1;
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function detectThreat(pixel, colony) {
+      // If enemy nearby, increase danger and (workers) may flee or recruit
+      let threat = 0;
+      for (const d of DIRS8) {
+        const p = SAFE_GET(pixel.x + d.dx, pixel.y + d.dy);
+        if (isEnemyPixel(p, colony.id)) threat++;
+      }
+      if (threat > 0) {
+        colony.danger = clamp(colony.danger + threat * 0.25, 0, 12);
+        return true;
+      }
+      // danger naturally decays
+      colony.danger = colony.danger * 0.997;
+      return false;
+    }
+
+    function workerTick(pixel) {
+      doDefaults(pixel);
+      const colony = ensureAnt(pixel, "worker");
+
+      // anchor colony home near the queen if possible, else near earliest worker
+      if (colony.homeX === null || colony.homeY === null) {
+        colony.homeX = pixel.x; colony.homeY = pixel.y;
+      }
+
+      // temperature limits
+      if (pixel.temp < -10 || pixel.temp > 65) {
+        changePixel(pixel, "colony_ant_corpse");
+        return;
+      }
+
+      // energy & hunger
+      pixel._antEnergy = clamp((pixel._antEnergy ?? 1) - 0.00055, 0, 1.2);
+
+      // if carrying food, you can "snack" a tiny bit
+      if ((pixel._antCarryFood ?? 0) > 0 && pixel._antEnergy < 0.55 && Math.random() < 0.02) {
+        pixel._antCarryFood -= 1;
+        pixel._antEnergy = clamp(pixel._antEnergy + 0.25, 0, 1.2);
+      }
+
+      if (pixel._antEnergy <= 0.001) {
+        changePixel(pixel, "colony_ant_corpse");
+        return;
+      }
+
+      // threat detection
+      const threatened = detectThreat(pixel, colony);
+
+      const inside = isInsideNestArea(pixel);
+
+      // task switching (simple but effective)
+      // - If carrying food: return
+      // - If in nest and brood exists nearby: nurse sometimes
+      // - If colony food is low: forage more
+      // - If colony danger high: help defend
+      if ((pixel._antCarryFood ?? 0) > 0) {
+        pixel._antTask = "return";
+      } else if (colony.danger >= 5 && Math.random() < 0.15) {
+        pixel._antTask = "patrol";
+      } else if (inside && Math.random() < 0.12) {
+        // if any larvae nearby, nurse
+        let hasLarva = false;
+        for (const d of DIRS8) {
+          const p = SAFE_GET(pixel.x + d.dx, pixel.y + d.dy);
+          if (p && p.element === "colony_ant_larva" && p._antColonyId === colony.id) { hasLarva = true; break; }
+        }
+        if (hasLarva) pixel._antTask = "nurse";
+      } else {
+        if (colony.food <= 4) pixel._antTask = "forage";
+        else if (inside && Math.random() < 0.06) pixel._antTask = "dig";
+        else pixel._antTask = "forage";
+      }
+
+      // pheromone deposition:
+      // - when returning: lay "food trail" (recruitment)
+      // - when inside nest / moving home: maintain "home odor"
+      const sub = substratePixelAt(pixel.x, pixel.y);
+      if (pixel._antTask === "return") phAdd(sub, "food", 0.65);
+      if (inside) phAdd(sub, "home", 0.28);
+      else if (pixel._antTask === "forage") phAdd(sub, "home", 0.10);
+
+      // nursing: feed brood/queen if carrying
+      if (pixel._antTask === "nurse") {
+        if (feedNearbyBroodOrQueen(pixel, colony)) {
+          // gentle home reinforcement
+          phAdd(sub, "home", 0.35);
+        }
+      }
+
+      // find move
+      const move = pickMove(pixel, colony, pixel._antTask);
+
+      if (!move) {
+        // if stuck in air, fall
+        tryMove(pixel, pixel.x, pixel.y + 1);
+        return;
+      }
+
+      // interaction types
+      const tgt = SAFE_GET(move.nx, move.ny);
+
+      if (move.moveType === "food" && tgt && isFoodElementName(tgt.element) && (pixel._antCarryFood ?? 0) <= 0) {
+        // harvest food
+        // take some nutrition; convert large food into smaller "pellets" by partial harvest
+        deletePixel(move.nx, move.ny);
+        pixel._antCarryFood = randInt(2, 5);
+        pixel._antTask = "return";
+        phAdd(sub, "food", 2.0);
+      } else if (move.moveType === "dig" && tgt) {
+        // dig/build: convert ground into nest
+        // (ants "excavate + reinforce" with nest material)
+        if (tgt.element !== "colony_ant_nest" && Math.random() < 0.65) {
+          changePixel(tgt, "colony_ant_nest");
+          // seed home pheromone so others learn the tunnel network
+          phAdd(tgt, "home", 1.2);
+        }
+        // move into it (tunnels are tight)
+        tryAntMove(pixel, move.nx, move.ny, true);
+      } else {
+        // normal movement (through nest if needed)
+        const success = tryAntMove(pixel, move.nx, move.ny, move.leaveNest);
+        if (success) {
+          pixel._antLastDx = move.d.dx;
+          pixel._antLastDy = move.d.dy;
+        } else {
+          // fallback: gravity
+          tryMove(pixel, pixel.x, pixel.y + 1);
+        }
+      }
+
+      // if returned to nest and still carrying, share
+      if (isInsideNestArea(pixel) && (pixel._antCarryFood ?? 0) > 0) {
+        if (!feedNearbyBroodOrQueen(pixel, colony)) {
+          // deposit to colony store
+          const give = Math.min(pixel._antCarryFood, 2);
+          pixel._antCarryFood -= give;
+          colony.food += give;
+        }
+      }
+    }
+
+    function soldierTick(pixel) {
+      doDefaults(pixel);
+      const colony = ensureAnt(pixel, "soldier");
+
+      if (colony.homeX === null || colony.homeY === null) {
+        colony.homeX = pixel.x; colony.homeY = pixel.y;
+      }
+
+      if (pixel.temp < -12 || pixel.temp > 70) {
+        changePixel(pixel, "colony_ant_corpse");
+        return;
+      }
+
+      pixel._antEnergy = clamp((pixel._antEnergy ?? 1) - 0.00045, 0, 1.2);
+      if (pixel._antEnergy <= 0.001) {
+        changePixel(pixel, "colony_ant_corpse");
+        return;
+      }
+
+      // attack nearby enemies
+      let attacked = false;
+      for (const d of DIRS8) {
+        const p = SAFE_GET(pixel.x + d.dx, pixel.y + d.dy);
+        if (isEnemyPixel(p, colony.id)) {
+          // crude combat: delete enemy sometimes, otherwise just push away
+          colony.danger = clamp(colony.danger + 1.2, 0, 12);
+          if (Math.random() < 0.45) {
+            deletePixel(p.x, p.y);
+          } else {
+            // shove
+            const sx = p.x + d.dx;
+            const sy = p.y + d.dy;
+            if (!outOfBounds(sx, sy) && isEmpty(sx, sy)) movePixel(p, sx, sy);
+          }
+          attacked = true;
+          break;
+        }
+      }
+
+      // patrol / guard
+      pixel._antTask = (colony.danger >= 4 || attacked) ? "patrol" : "return";
+
+      // lay strong home pheromone inside, and slight "home alert"
+      const inside = isInsideNestArea(pixel);
+      const sub = substratePixelAt(pixel.x, pixel.y);
+      if (inside) phAdd(sub, "home", 0.45);
+      if (colony.danger >= 4) phAdd(sub, "food", 0.06); // "alarm" piggyback on food trail channel
+
+      const move = pickMove(pixel, colony, pixel._antTask);
+      if (!move) {
+        tryMove(pixel, pixel.x, pixel.y + 1);
+        return;
+      }
+
+      const success = tryAntMove(pixel, move.nx, move.ny, move.leaveNest);
+      if (success) {
+        pixel._antLastDx = move.d.dx;
+        pixel._antLastDy = move.d.dy;
+      } else {
+        tryMove(pixel, pixel.x, pixel.y + 1);
+      }
+    }
+
+    function queenBuildNest(pixel, colony) {
+      // Slowly converts nearby ground to nest material.
+      const r = 4;
+      const attempts = 3;
+
+      for (let i = 0; i < attempts; i++) {
+        const dx = randInt(-r, r);
+        const dy = randInt(-r, r);
+        const x = pixel.x + dx;
+        const y = pixel.y + dy;
+        if (outOfBounds(x, y)) continue;
+
+        const p = SAFE_GET(x, y);
+        if (!p) continue;
+
+        // don't overwrite brood/ants
+        if (p.element.startsWith("colony_ant_")) continue;
+
+        // convert suitable ground into nest
+        const e = elements[p.element];
+        if (!e) continue;
+        const st = e.state;
+
+        const ok =
+          p.element === "dirt" || p.element === "sand" || p.element.includes("soil") ||
+          (e.category === "land" || e.category === "powders") && st !== "liquid" && st !== "gas";
+
+        if (ok && Math.random() < 0.65) {
+          changePixel(p, "colony_ant_nest");
+          phAdd(p, "home", 1.6);
+        }
+      }
+    }
+
+    function queenTick(pixel) {
+      doDefaults(pixel);
+      const colony = ensureAnt(pixel, "queen");
+
+      // queen defines colony home
+      colony.homeX = pixel.x;
+      colony.homeY = pixel.y;
+
+      if (pixel.temp < -8 || pixel.temp > 62) {
+        changePixel(pixel, "colony_ant_corpse");
+        return;
+      }
+
+      // queens are more energy-efficient
+      pixel._antEnergy = clamp((pixel._antEnergy ?? 1) - 0.00025, 0, 1.4);
+
+      // nest building
+      if (Math.random() < 0.40) queenBuildNest(pixel, colony);
+
+      // home pheromone near queen is strong (nest "odor core")
+      const sub = substratePixelAt(pixel.x, pixel.y);
+      phAdd(sub, "home", 1.2);
+
+      // eat from colony store
+      if (pixel._antEnergy < 0.9 && colony.food > 0) {
+        colony.food -= 1;
+        pixel._antEnergy = clamp(pixel._antEnergy + 0.35, 0, 1.4);
+      }
+
+      if (pixel._antEnergy <= 0.001) {
+        changePixel(pixel, "colony_ant_corpse");
+        return;
+      }
+
+      // egg laying: requires colony food
+      pixel._antEggCooldown = Math.max(0, (pixel._antEggCooldown ?? 0) - 1);
+
+      const canLay = colony.food >= 1 && pixel._antEggCooldown <= 0;
+      if (canLay) {
+        // egg rate adapts: faster when food is plentiful
+        const interval = clamp(520 - colony.food * 10, 220, 520);
+
+        // place eggs in nearby nest pixels (or convert suitable ground)
+        let laid = false;
+        for (let tries = 0; tries < 18; tries++) {
+          const d = DIRS8[randInt(0, DIRS8.length - 1)];
+          const x = pixel.x + d.dx;
+          const y = pixel.y + d.dy;
+          if (outOfBounds(x, y)) continue;
+          const p = SAFE_GET(x, y);
+
+          if (!p) continue;
+
+          if (p.element === "colony_ant_nest") {
+            colony.food -= 1;
+            changePixel(p, "colony_ant_egg");
+            p._antColonyId = colony.id;
+            p._antBroodFood = 0;
+            phAdd(p, "home", 1.0);
+            pixel._antEggCooldown = interval;
+            laid = true;
+            break;
+          }
+        }
+        if (!laid && Math.random() < 0.15) {
+          // if no nest tile found, build a bit more nest
+          queenBuildNest(pixel, colony);
+        }
+      }
+
+      // queen movement is minimal (wiggle inside nest)
+      if (Math.random() < 0.15) {
+        const move = pickMove(pixel, colony, "nurse");
+        if (move) {
+          tryAntMove(pixel, move.nx, move.ny, true);
+          pixel._antLastDx = move.d.dx;
+          pixel._antLastDy = move.d.dy;
+        }
+      }
+    }
+
+    // ---------- elements ----------
+    registerElement("colony_ant_nest", {
+      name: "Ant Nest",
+      category: MOD,
+      color: ["#6b4b2a", "#5f4024", "#76512d", "#4e351e"],
+      state: "solid",
+      density: 1600,
+      hardness: 0.85,
+      movable: false,
+      desc: "Packed nest material. Ants can move through it. Stores pheromone trails & food/home cues.",
+      // Light self-decay of pheromones even if not visited (lazy decay already works, this is extra smoothing)
+      tick(pixel) {
+        // very cheap: only touch its own values occasionally
+        if ((pixel._antPhF_v || pixel._antPhH_v) && Math.random() < 0.03) {
+          // rewrite decayed values
+          phGet(pixel, "food");
+          phGet(pixel, "home");
+        }
+      },
+    });
+
+    registerElement("colony_ant_food_pellet", {
+      name: "Ant Food Pellet",
+      category: MOD,
+      color: ["#caa24b", "#b9923e", "#d2b15a"],
+      state: "solid",
+      density: 900,
+      behavior: behaviors.POWDER,
+      desc: "A small food chunk ants can harvest. (Workers also treat most Food-category elements as food.)",
+    });
+
+    registerElement("colony_ant_egg", {
+      name: "Ant Egg",
+      category: MOD,
+      color: ["#e8e1d7", "#f0eadf"],
+      state: "solid",
+      density: 1100,
+      movable: false,
+      desc: "Eggs hatch into larvae.",
+      tick(pixel) { broodTick(pixel, "egg"); },
+    });
+
+    registerElement("colony_ant_larva", {
+      name: "Ant Larva",
+      category: MOD,
+      color: ["#e9d8c4", "#e1cdb6"],
+      state: "solid",
+      density: 1150,
+      movable: false,
+      desc: "Larvae must be fed by workers to pupate.",
+      tick(pixel) { broodTick(pixel, "larva"); },
+    });
+
+    registerElement("colony_ant_pupa", {
+      name: "Ant Pupa",
+      category: MOD,
+      color: ["#d4c2aa", "#cdb79c"],
+      state: "solid",
+      density: 1200,
+      movable: false,
+      desc: "Pupae develop into workers or soldiers.",
+      tick(pixel) { broodTick(pixel, "pupa"); },
+    });
+
+    registerElement("colony_ant_worker", {
+      name: "Ant Worker",
+      category: MOD,
+      color: ["#2b1a12", "#1f140f", "#3a231a"],
+      state: "solid",
+      density: 900,
+      desc: "Workers forage, follow pheromone trails, feed brood/queen, and expand the nest.",
+      tick(pixel) { workerTick(pixel); },
+    });
+
+    registerElement("colony_ant_soldier", {
+      name: "Ant Soldier",
+      category: MOD,
+      color: ["#1a0f0a", "#120a06", "#2a1710"],
+      state: "solid",
+      density: 980,
+      desc: "Soldiers patrol and attack nearby enemies. Stronger defensive behavior when danger rises.",
+      tick(pixel) { soldierTick(pixel); },
+    });
+
+    registerElement("colony_ant_queen", {
+      name: "Ant Queen",
+      category: MOD,
+      color: ["#3b1b12", "#4a2418", "#2a140d"],
+      state: "solid",
+      density: 1050,
+      desc: "The queen anchors the colony, builds nest material, and lays eggs when fed.",
+      tick(pixel) { queenTick(pixel); },
+    });
+
+    registerElement("colony_ant_corpse", {
+      name: "Ant Corpse",
+      category: MOD,
+      color: ["#3a2f28", "#2f2620", "#4a3b33"],
+      state: "solid",
+      density: 1100,
+      behavior: behaviors.POWDER,
+      desc: "Dead ants. Other creatures may treat this as food.",
+      tick(pixel) {
+        doDefaults(pixel);
+        // slow decay into dirt-ish material if available
+        if (Math.random() < 0.0008) {
+          if (elements.dirt) changePixel(pixel, "dirt");
+          else if (elements.mud) changePixel(pixel, "mud");
+        }
+      },
+    });
+
+    // Optional: classify ants as animals so other systems can notice them
+    try {
+      if (typeof eListAdd === "function") {
+        eListAdd("ANIMAL", ["colony_ant_worker", "colony_ant_soldier", "colony_ant_queen"]);
+      }
+    } catch (e) {}
+
+    logMessage(`✅ Loaded: ${MOD} (queen + workers + soldiers + brood + pheromones)`);
+  });
+})();
