@@ -1,35 +1,33 @@
 (() => {
   "use strict";
 
-  if (window.__NEO_UI_PLUS_SAFE__) return;
-  window.__NEO_UI_PLUS_SAFE__ = true;
+  if (window.__NEO_UI_PLUS_SAFE_V363__) return;
+  window.__NEO_UI_PLUS_SAFE_V363__ = true;
 
   const Keys = {
-    settings: "neo_safe/settings",
-    favs: "neo_safe/favs",
-    recents: "neo_safe/recents",
-    tab: "neo_safe/tab",
-    cat: "neo_safe/cat",
-    compact: "neo_safe/compact",
-    hideCats: "neo_safe/hideCats",
-    scale: "neo_safe/scale",
-    topLift: "neo_safe/topLift",
-    tps: "neo_safe/tps",
+    settings: "neo_safe/settings_v363",
+    favs: "neo_safe/favs_v363",
+    recents: "neo_safe/recents_v363",
+    tab: "neo_safe/tab_v363",
+    cat: "neo_safe/cat_v363",
+    compact: "neo_safe/compact_v363",
+    hideCats: "neo_safe/hideCats_v363",
+    scale: "neo_safe/scale_v363",
+    topLift: "neo_safe/topLift_v363",
+    tps: "neo_safe/tps_v363",
 
-    openE: "neo_safe/openE",
-    openS: "neo_safe/openS",
-    maxE: "neo_safe/maxE",
-    maxS: "neo_safe/maxS",
-    wE: "neo_safe/wE",
-    wS: "neo_safe/wS",
+    openE: "neo_safe/openE_v363",
+    openS: "neo_safe/openS_v363",
+    maxE: "neo_safe/maxE_v363",
+    maxS: "neo_safe/maxS_v363",
+    wE: "neo_safe/wE_v363",
+    wS: "neo_safe/wS_v363",
 
-    enabledModsKeyGuess: "neo_safe/enabledModsKeyGuess",
-
-    startupMods: "neo_safe/startupMods",
-    startupSessionOff: "neo_safe/startupSessionOff", // sessionStorage
-
-    liveMods: "neo_safe/liveMods",
-    liveSessionOff: "neo_safe/liveSessionOff", // sessionStorage
+    enabledModsKeyGuess: "neo_safe/enabledModsKeyGuess_v363",
+    startupMods: "neo_safe/startupMods_v363",
+    startupSessionOff: "neo_safe/startupSessionOff_v363",
+    liveMods: "neo_safe/liveMods_v363",
+    liveSessionOff: "neo_safe/liveSessionOff_v363",
   };
 
   const Defaults = {
@@ -52,9 +50,10 @@
     scale: 1.30,
     topLift: 10,
     tps: 60,
-
-    smarterHumans: false,
   };
+
+  const WHITE = "rgba(255,255,255,.92)";
+  const PURPLE = "rgba(167,139,250,.95)";
 
   const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
   const $ = (s, r = document) => r.querySelector(s);
@@ -108,29 +107,11 @@
     for (const c of kids) n.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
     return n;
   }
-function injectCreditTag() {
-  try {
-    const want = /developed by\s*r74n/i;
-    let target = null;
 
-    const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    let n;
-    while ((n = tw.nextNode())) {
-      const txt = (n.nodeValue || "").trim();
-      if (!txt) continue;
-      if (want.test(txt)) { target = n.parentElement; break; }
-    }
-    if (!target) return;
-    if (target.querySelector?.(".neoCreditTag")) return;
+  function safe(fn) { try { fn(); } catch (e) { console.error("[Neo UI+] error:", e); } }
 
-    const span = document.createElement("span");
-    span.className = "neoCreditTag";
-    span.textContent = "modded by Playfullgamer";
-    target.appendChild(span);
-  } catch {}
-}
   function toast(msg) {
-    try {
+    safe(() => {
       if (!Store.settings().enableNeoUI) return;
       const t = $("#neoToast");
       if (!t) return;
@@ -138,10 +119,8 @@ function injectCreditTag() {
       t.style.display = "block";
       clearTimeout(toast._tm);
       toast._tm = setTimeout(() => (t.style.display = "none"), 1000);
-    } catch {}
+    });
   }
-
-  function safe(fn) { try { fn(); } catch (e) { console.error("[Neo UI+] error:", e); } }
 
   const Mods = {
     looksLikeMod(s) {
@@ -410,7 +389,7 @@ body.neoUI{
   --neoPanel2:rgba(14,16,22,.92);
   --neoBorder:rgba(255,255,255,.12);
   --neoBorder2:rgba(255,255,255,.08);
-  --neoText:rgba(255,255,255,.92);
+  --neoText:${WHITE};
   --neoMuted:rgba(255,255,255,.62);
   --neoShadow:0 16px 48px rgba(0,0,0,.55);
   --neoShadow2:0 10px 30px rgba(0,0,0,.45);
@@ -437,7 +416,7 @@ body.neoUI.neoTopStyle #controls .controlButton{
 
 #neoOverlay{position:fixed;inset:0;background:rgba(0,0,0,.40);z-index:999980;display:none;pointer-events:none;}
 #neoOverlay.open{display:block;pointer-events:auto;}
-.neoCreditTag{color:rgba(167,139,250,.95);font-weight:900;margin-left:8px;}
+
 .neoEdge{position:fixed;top:calc(var(--neoTop) + 10px);z-index:999995;user-select:none;cursor:pointer;color:var(--neoText);
   background:linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04));
   border:1px solid var(--neoBorder);box-shadow:var(--neoShadow2);padding:10px 10px;border-radius:14px;opacity:.96;}
@@ -454,7 +433,6 @@ body.neoUI.neoTopStyle #controls .controlButton{
 #neoElements.open{transform:translateX(0);}
 #neoSettings{right:8px;width:var(--neoWS);transform:translateX(110%);transition:transform 160ms ease;}
 #neoSettings.open{transform:translateX(0);}
-
 .neoMax{left:8px !important;right:8px !important;width:auto !important;top:var(--neoTop) !important;bottom:8px !important;height:auto !important;transform:none !important;}
 
 .neoHdr{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px;border-bottom:1px solid var(--neoBorder2);background:rgba(0,0,0,.10);}
@@ -485,7 +463,6 @@ body.neoUI.neoHideCats #neoCats{display:none;}
 body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(150px, 1fr));gap:8px;}
 #neoElements.neoMax #neoGrid{grid-template-columns:repeat(auto-fill, minmax(210px, 1fr));}
 #neoElements.neoMax #neoElBody{grid-template-columns:240px 1fr;}
-
 .neoElBtn{display:flex;align-items:flex-start;gap:10px;padding:10px;border-radius:14px;border:1px solid var(--neoBorder2);
   background:linear-gradient(180deg, rgba(255,255,255,.09), rgba(255,255,255,.03));cursor:pointer;min-height:44px;}
 .neoDot{width:14px;height:14px;border-radius:999px;box-shadow:inset 0 0 0 2px rgba(0,0,0,.25);margin-top:2px;}
@@ -493,7 +470,7 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(15
 #neoElements.neoMax .neoName{-webkit-line-clamp:3;}
 .neoStarBtn{margin-left:auto;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.05);color:rgba(255,255,255,.90);
   border-radius:12px;padding:6px 8px;cursor:pointer;}
-.neoStarBtn.on{border-color:rgba(167,139,250,.45);background:rgba(167,139,250,.12);}
+.neoStarBtn.on{border-color:${PURPLE};background:rgba(167,139,250,.12);}
 
 #neoPreview{border:1px solid var(--neoBorder2);border-radius:14px;background:rgba(255,255,255,.04);padding:10px;display:none;}
 #neoPreview.show{display:block;}
@@ -511,8 +488,6 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(15
 .neoRow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
 .neoInput{flex:1;min-width:240px;border-radius:14px;border:1px solid var(--neoBorder2);background:rgba(255,255,255,.05);color:var(--neoText);padding:10px 12px;outline:none;}
 .neoBadge{font-size:11px;padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:rgba(255,255,255,.72);}
-.neoBadge.ok{border-color:rgba(80,220,140,.35);background:rgba(80,220,140,.12);color:rgba(210,255,230,.9);}
-.neoBadge.warn{border-color:rgba(255,200,90,.35);background:rgba(255,200,90,.12);color:rgba(255,240,210,.92);}
 
 #neoModTools{display:flex;gap:10px;align-items:center;padding:10px 10px;margin:10px 0;border-radius:16px;background:rgba(0,0,0,.20);border:1px solid rgba(255,255,255,.10);}
 #neoModSearch{flex:1;padding:10px 12px;border-radius:14px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.05);color:rgba(255,255,255,.92);outline:none;}
@@ -525,10 +500,11 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(15
   backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
   border-radius:999px;padding:8px 12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;
   box-shadow:0 14px 40px rgba(0,0,0,.35);color:rgba(255,255,255,.90);font-size:12px;}
-#neoInfo b{color:rgba(255,255,255,.92);}
+#neoInfo b{color:${WHITE};}
 #neoInfo span{color:rgba(255,255,255,.74);}
 
-.neoCreditTag{color: rgba(167,139,250,.95);font-weight: 900;margin-left: 8px;}
+.neoCreditHost{color:${WHITE} !important;}
+.neoCreditTag{color:${PURPLE} !important;font-weight:900;margin-left:8px;}
       `;
     }
   };
@@ -576,108 +552,79 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(15
     }
   };
 
-  function injectCreditTag() {
+  function injectCreditTagHard() {
     safe(() => {
-      const want = /developed by\s*r74n/i;
+      if (!document.body) return;
+
+      const rx = /\br74n\b/i;
+      const rxDev = /developed by/i;
+
       let target = null;
 
-      const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-      let n;
-      while ((n = tw.nextNode())) {
-        const txt = (n.nodeValue || "").trim();
-        if (!txt) continue;
-        if (want.test(txt)) { target = n.parentElement; break; }
+      const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+          const p = node.parentElement;
+          if (!p) return NodeFilter.FILTER_REJECT;
+          const tag = (p.tagName || "").toLowerCase();
+          if (tag === "script" || tag === "style" || tag === "textarea") return NodeFilter.FILTER_REJECT;
+          const txt = (node.nodeValue || "").trim();
+          if (!txt) return NodeFilter.FILTER_REJECT;
+          const full = (p.textContent || "");
+          if (!rx.test(full)) return NodeFilter.FILTER_REJECT;
+          if (rxDev.test(full) || rxDev.test(txt) || rx.test(txt)) return NodeFilter.FILTER_ACCEPT;
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      });
+
+      let node;
+      while ((node = tw.nextNode())) {
+        const p = node.parentElement;
+        if (!p) continue;
+
+        // avoid touching our own panels
+        if (p.closest("#neoElements,#neoSettings,#neoInfo,#neoOverlay")) continue;
+
+        // pick the smallest sensible container
+        let host = p;
+        for (let i = 0; i < 3; i++) {
+          if (!host.parentElement) break;
+          const t = (host.textContent || "").trim();
+          if (t.length > 140) break;
+          host = host.parentElement;
+        }
+
+        target = host;
+        break;
       }
+
       if (!target) return;
-      if (target.querySelector?.(".neoCreditTag")) return;
-      target.appendChild(el("span", { class: "neoCreditTag" }, "modded by Playfullgamer"));
+
+      // If the credit text is inside a link or span, make sure we attach on the visible container
+      if (target.querySelector && target.querySelector(".neoCreditTag")) {
+        target.classList.add("neoCreditHost");
+        return;
+      }
+
+      target.classList.add("neoCreditHost");
+
+      const span = document.createElement("span");
+      span.className = "neoCreditTag";
+      span.textContent = "modded by Playfullgamer";
+      target.appendChild(span);
     });
   }
 
-  function buildUI() {
-    if ($("#neoElements")) return;
-
-    document.body.appendChild(el("div", { id: "neoOverlay", onclick: () => { setOpenE(false); setOpenS(false); } }));
-    document.body.appendChild(el("div", { id: "neoToast" }));
-    document.body.appendChild(el("div", { id: "neoInfo" }, el("div", { class: "pill" }, "")));
-
-    document.body.appendChild(
-      el("div", { id: "neoEdgeElements", class: "neoEdge", onclick: () => setOpenE(true) },
-        el("span", { class: "lbl" }, "ELEMENTS"),
-        el("span", { class: "sub" }, "☰")
-      )
-    );
-    document.body.appendChild(
-      el("div", { id: "neoEdgeSettings", class: "neoEdge", onclick: () => setOpenS(true) },
-        el("span", { class: "lbl" }, "SETTINGS"),
-        el("span", { class: "sub" }, "⚙")
-      )
-    );
-
-    const elPanel = el("div", { id: "neoElements", class: "neoDrawer" },
-      el("div", { class: "neoHdr" },
-        el("div", { class: "neoTitle" }, "Elements"),
-        el("div", { class: "neoBtns" },
-          el("button", { class: "neoBtn ghost", onclick: () => { toggleBool(Keys.compact); applyBodyFlags(); renderElements(); } }, "▦"),
-          el("button", { class: "neoBtn ghost", onclick: () => { toggleBool(Keys.hideCats); applyBodyFlags(); } }, "☰"),
-          el("button", { class: "neoBtn", onclick: () => setMax("elements", !isMax("elements")) }, "⤢"),
-          el("button", { class: "neoBtn", onclick: () => setOpenS(true) }, "⚙"),
-          el("button", { class: "neoBtn", onclick: () => setOpenE(false) }, "×")
-        )
-      ),
-      el("div", { class: "neoTabs" },
-        el("div", { class: "neoTab", id: "neoTabAll", onclick: () => setTab("all") }, "All"),
-        el("div", { class: "neoTab", id: "neoTabFav", onclick: () => setTab("fav") }, "Fav"),
-        el("div", { class: "neoTab", id: "neoTabRec", onclick: () => setTab("recent") }, "Recent")
-      ),
-      el("div", { class: "neoSearchRow" },
-        el("input", { id: "neoSearch", type: "text", placeholder: "Search…" }),
-        el("button", { class: "neoBtn", onclick: () => { $("#neoSearch").value = ""; renderElements(); } }, "×")
-      ),
-      el("div", { id: "neoElBody" },
-        el("div", { id: "neoCats" }),
-        el("div", { id: "neoElRight" },
-          el("div", { id: "neoGridWrap" },
-            el("div", { id: "neoGridHead" },
-              el("div", { id: "neoCount" }, ""),
-              el("div", { style: "display:flex;gap:8px;align-items:center;" },
-                el("button", { class: "neoBtn ghost", onclick: () => setOpenE(false) }, "Hide")
-              )
-            ),
-            el("div", { id: "neoGrid" })
-          ),
-          el("div", { id: "neoPreview" })
-        )
-      )
-    );
-
-    const stPanel = el("div", { id: "neoSettings", class: "neoDrawer" },
-      el("div", { class: "neoHdr" },
-        el("div", { class: "neoTitle" }, "Settings"),
-        el("div", { class: "neoBtns" },
-          el("button", { class: "neoBtn", onclick: () => setMax("settings", !isMax("settings")) }, "⤢"),
-          el("button", { class: "neoBtn", onclick: () => setOpenE(true) }, "☰"),
-          el("button", { class: "neoBtn", onclick: () => setOpenS(false) }, "×")
-        )
-      ),
-      el("div", { id: "neoSettingsBody" })
-    );
-
-    document.body.append(elPanel, stPanel);
-    $("#neoSearch").addEventListener("input", renderElements);
+  let creditObserver = null;
+  function startCreditObserver() {
+    if (creditObserver || !window.MutationObserver) return;
+    creditObserver = new MutationObserver(() => injectCreditTagHard());
+    creditObserver.observe(document.body, { childList: true, subtree: true });
   }
 
-  function applyBodyFlags() {
-    const s = Store.settings();
-    const compact = (localStorage.getItem(Keys.compact) ?? (s.compactGrid ? "1" : "0")) === "1";
-    const hideCats = (localStorage.getItem(Keys.hideCats) ?? (s.hideCategories ? "1" : "0")) === "1";
-    document.body.classList.toggle("neoCompact", compact);
-    document.body.classList.toggle("neoHideCats", hideCats);
-  }
-
-  function toggleBool(key) {
-    const cur = localStorage.getItem(key) === "1";
-    localStorage.setItem(key, cur ? "0" : "1");
+  function toggleBool(key, fallbackBool) {
+    const cur = localStorage.getItem(key);
+    const v = cur == null ? !!fallbackBool : cur === "1";
+    localStorage.setItem(key, v ? "0" : "1");
   }
 
   function isOpenE() { return localStorage.getItem(Keys.openE) === "1"; }
@@ -732,9 +679,88 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(15
     $("#neoEdgeSettings")?.classList.toggle("hidden", !(s.enableNeoUI && s.settingsPanel) || isOpenS());
   }
 
+  function applyBodyFlags() {
+    const s = Store.settings();
+    const compact = (localStorage.getItem(Keys.compact) ?? (s.compactGrid ? "1" : "0")) === "1";
+    const hideCats = (localStorage.getItem(Keys.hideCats) ?? (s.hideCategories ? "1" : "0")) === "1";
+    document.body.classList.toggle("neoCompact", compact);
+    document.body.classList.toggle("neoHideCats", hideCats);
+  }
+
+  function buildUI() {
+    if ($("#neoElements")) return;
+
+    document.body.appendChild(el("div", { id: "neoOverlay", onclick: () => { setOpenE(false); setOpenS(false); } }));
+    document.body.appendChild(el("div", { id: "neoToast" }));
+    document.body.appendChild(el("div", { id: "neoInfo" }, el("div", { class: "pill" }, "")));
+
+    document.body.appendChild(
+      el("div", { id: "neoEdgeElements", class: "neoEdge", onclick: () => setOpenE(true) },
+        el("span", { class: "lbl" }, "ELEMENTS"),
+        el("span", { class: "sub" }, "☰")
+      )
+    );
+    document.body.appendChild(
+      el("div", { id: "neoEdgeSettings", class: "neoEdge", onclick: () => setOpenS(true) },
+        el("span", { class: "lbl" }, "SETTINGS"),
+        el("span", { class: "sub" }, "⚙")
+      )
+    );
+
+    const elPanel = el("div", { id: "neoElements", class: "neoDrawer" },
+      el("div", { class: "neoHdr" },
+        el("div", { class: "neoTitle" }, "Elements"),
+        el("div", { class: "neoBtns" },
+          el("button", { class: "neoBtn ghost", onclick: () => { toggleBool(Keys.compact, Store.settings().compactGrid); applyBodyFlags(); renderElements(); } }, "▦"),
+          el("button", { class: "neoBtn ghost", onclick: () => { toggleBool(Keys.hideCats, Store.settings().hideCategories); applyBodyFlags(); } }, "☰"),
+          el("button", { class: "neoBtn", onclick: () => setMax("elements", !isMax("elements")) }, "⤢"),
+          el("button", { class: "neoBtn", onclick: () => setOpenS(true) }, "⚙"),
+          el("button", { class: "neoBtn", onclick: () => setOpenE(false) }, "×")
+        )
+      ),
+      el("div", { class: "neoTabs" },
+        el("div", { class: "neoTab", id: "neoTabAll", onclick: () => setTab("all") }, "All"),
+        el("div", { class: "neoTab", id: "neoTabFav", onclick: () => setTab("fav") }, "Fav"),
+        el("div", { class: "neoTab", id: "neoTabRec", onclick: () => setTab("recent") }, "Recent")
+      ),
+      el("div", { class: "neoSearchRow" },
+        el("input", { id: "neoSearch", type: "text", placeholder: "Search…" }),
+        el("button", { class: "neoBtn", onclick: () => { $("#neoSearch").value = ""; renderElements(); } }, "×")
+      ),
+      el("div", { id: "neoElBody" },
+        el("div", { id: "neoCats" }),
+        el("div", { id: "neoElRight" },
+          el("div", { id: "neoGridWrap" },
+            el("div", { id: "neoGridHead" },
+              el("div", { id: "neoCount" }, ""),
+              el("div", { style: "display:flex;gap:8px;align-items:center;" },
+                el("button", { class: "neoBtn ghost", onclick: () => setOpenE(false) }, "Hide")
+              )
+            ),
+            el("div", { id: "neoGrid" })
+          ),
+          el("div", { id: "neoPreview" })
+        )
+      )
+    );
+
+    const stPanel = el("div", { id: "neoSettings", class: "neoDrawer" },
+      el("div", { class: "neoHdr" },
+        el("div", { class: "neoTitle" }, "Settings"),
+        el("div", { class: "neoBtns" },
+          el("button", { class: "neoBtn", onclick: () => setMax("settings", !isMax("settings")) }, "⤢"),
+          el("button", { class: "neoBtn", onclick: () => setOpenE(true) }, "☰"),
+          el("button", { class: "neoBtn", onclick: () => setOpenS(false) }, "×")
+        )
+      ),
+      el("div", { id: "neoSettingsBody" })
+    );
+
+    document.body.append(elPanel, stPanel);
+    $("#neoSearch").addEventListener("input", renderElements);
+  }
+
   function setTab(t) {
-    UI.state = UI.state || {};
-    UI.state.tab = t;
     localStorage.setItem(Keys.tab, t);
     $("#neoTabAll")?.classList.toggle("active", t === "all");
     $("#neoTabFav")?.classList.toggle("active", t === "fav");
@@ -760,7 +786,7 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(15
       const label = c === "all" ? "All" : (labels.get(c) || String(c).replace(/_/g, " "));
       const btn = el("button", { class: "neoElBtn", style: "justify-content:flex-start;width:100%;" }, label);
       btn.onclick = () => { localStorage.setItem(Keys.cat, c); renderCats(); renderElements(); };
-      if (curCat === c) btn.style.outline = "2px solid rgba(167,139,250,.45)";
+      if (curCat === c) btn.style.outline = `2px solid ${PURPLE}`;
       wrap.appendChild(btn);
     }
   }
@@ -868,7 +894,6 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(15
         el("div", {}, el("div", { style: "font-weight:800;" }, title), el("div", { class: "neoSmall" }, desc))
       );
     };
-
     const slider = (label, valueText, min, max, step, value, oninput) => {
       return el("div", { class: "neoCard" },
         el("div", { class: "neoSmall" }, `${label}: ${valueText}`),
@@ -896,13 +921,14 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(15
       section("TPS"),
       slider("TPS", String(UI.getTPS()), 1, 1000, 1, UI.getTPS(), (ev) => UI.setTPS(parseInt(ev.target.value, 10))),
 
+      section("Mods"),
+      ModsPanel(),
+
       section("Reset"),
       el("div", { class: "neoRow" },
         el("button", { class: "neoBtn", onclick: () => panicReset() }, "Reset layout")
       )
     );
-
-    body.append(section("Mods"), ModsPanel());
   }
 
   function ModsPanel() {
@@ -937,10 +963,12 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(15
     const lib = Mods.readStartupLib();
     const map = new Map(lib.map(x => [x.id, x]));
     for (const id of incoming) map.set(id, { id, enabled: true, addedAt: Date.now() });
+
     const out = [];
     const seen = new Set();
     for (const x of lib) { out.push(map.get(x.id) || x); seen.add(x.id); }
     for (const id of incoming) if (!seen.has(id)) out.push(map.get(id));
+
     Mods.writeStartupLib(out);
     Mods.applyStartupToEnabled();
 
@@ -1086,7 +1114,6 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(15
   function applySettings() {
     safe(() => {
       const s = Store.settings();
-
       document.body.classList.toggle("neoUI", !!s.enableNeoUI);
       document.body.classList.toggle("neoTopStyle", !!(s.enableNeoUI && s.restyleTop));
       document.body.classList.toggle("neoHideVanilla", !!(s.enableNeoUI && s.elementsPanel && s.hideVanillaElements));
@@ -1100,7 +1127,7 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(15
       renderElements();
       UI.renderInfo();
 
-      injectCreditTag();
+      injectCreditTagHard();
     });
   }
 
@@ -1199,30 +1226,47 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(15
       document.body.style.setProperty("--neoScale", String(UI.scale()));
       UI.setTPS(UI.getTPS());
 
+      UI.injectCSS();
       buildUI();
-      applySettings();
+
+      document.body.classList.add("neoUI");
 
       $("#neoElements")?.classList.toggle("open", isOpenE());
       $("#neoSettings")?.classList.toggle("open", isOpenS());
       $("#neoElements")?.classList.toggle("neoMax", isMax("elements"));
       $("#neoSettings")?.classList.toggle("neoMax", isMax("settings"));
 
+      applySettings();
       UI.updateTop();
       syncOverlayEdges();
+
+      Mods.syncStartupFromEnabled();
+      Mods.applyStartupToEnabled();
+
       renderCats();
       renderElements();
       renderStartupList();
       renderLiveList();
       UI.renderInfo();
 
-      Mods.syncStartupFromEnabled();
-      Mods.applyStartupToEnabled();
-
       enhanceModsMenuBar();
       installHotkeys();
 
-      injectCreditTag();
-      setInterval(() => { UI.updateTop(); syncOverlayEdges(); UI.renderInfo(); enhanceModsMenuBar(); injectCreditTag(); }, 900);
+      injectCreditTagHard();
+      startCreditObserver();
+
+      setInterval(() => {
+        UI.updateTop();
+        syncOverlayEdges();
+        UI.renderInfo();
+        enhanceModsMenuBar();
+        injectCreditTagHard();
+      }, 900);
+
+      window.addEventListener("resize", () => {
+        UI.updateTop();
+        syncOverlayEdges();
+      });
 
       Neo.emit("elements", window.elements);
       Neo.emit("ready");
@@ -1241,8 +1285,7 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(15
   }
 
   const start = () => waitForGameReady(boot);
-  injectCreditTag();
-  setInterval(injectCreditTag, 1500);
+
   if (typeof window.runAfterLoad === "function") window.runAfterLoad(start);
   else window.addEventListener("load", start, { once: true });
 })();
