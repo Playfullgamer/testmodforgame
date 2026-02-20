@@ -108,7 +108,27 @@
     for (const c of kids) n.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
     return n;
   }
+function injectCreditTag() {
+  try {
+    const want = /developed by\s*r74n/i;
+    let target = null;
 
+    const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let n;
+    while ((n = tw.nextNode())) {
+      const txt = (n.nodeValue || "").trim();
+      if (!txt) continue;
+      if (want.test(txt)) { target = n.parentElement; break; }
+    }
+    if (!target) return;
+    if (target.querySelector?.(".neoCreditTag")) return;
+
+    const span = document.createElement("span");
+    span.className = "neoCreditTag";
+    span.textContent = "modded by Playfullgamer";
+    target.appendChild(span);
+  } catch {}
+}
   function toast(msg) {
     try {
       if (!Store.settings().enableNeoUI) return;
@@ -417,7 +437,7 @@ body.neoUI.neoTopStyle #controls .controlButton{
 
 #neoOverlay{position:fixed;inset:0;background:rgba(0,0,0,.40);z-index:999980;display:none;pointer-events:none;}
 #neoOverlay.open{display:block;pointer-events:auto;}
-
+.neoCreditTag{color:rgba(167,139,250,.95);font-weight:900;margin-left:8px;}
 .neoEdge{position:fixed;top:calc(var(--neoTop) + 10px);z-index:999995;user-select:none;cursor:pointer;color:var(--neoText);
   background:linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04));
   border:1px solid var(--neoBorder);box-shadow:var(--neoShadow2);padding:10px 10px;border-radius:14px;opacity:.96;}
@@ -1221,7 +1241,8 @@ body.neoUI.neoCompact #neoGrid{grid-template-columns:repeat(auto-fill, minmax(15
   }
 
   const start = () => waitForGameReady(boot);
-
+  injectCreditTag();
+  setInterval(injectCreditTag, 1500);
   if (typeof window.runAfterLoad === "function") window.runAfterLoad(start);
   else window.addEventListener("load", start, { once: true });
 })();
