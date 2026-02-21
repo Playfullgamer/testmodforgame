@@ -2,9 +2,10 @@
   "use strict";
 
   const G = globalThis;
-  if (G.__sandboxels_pressure_system_v4) return;
+
+  if (G.__sandboxels_pressure_system_v5) return;
   if (typeof elements !== "object" || typeof behaviors !== "object") return;
-  G.__sandboxels_pressure_system_v4 = true;
+  G.__sandboxels_pressure_system_v5 = true;
 
   const ID = Object.freeze({
     PRESSURIZED_WATER: "pressurized_water",
@@ -19,49 +20,59 @@
   const CFG = Object.freeze({
     CAT: "pressure",
 
-    MAX_P: 600,
+    MAX_P: 650,
+
+    CONVERT_P: 26,
+    REVERT_P: 1,
 
     WATER_BUILD: 0.55,
-    STEAM_BUILD: 1.15,
-    CROWD_GAIN_W: 0.18,
-    CROWD_GAIN_S: 0.32,
+    STEAM_BUILD: 1.25,
 
-    OPEN_LOSS: 1.25,
-    OPEN_MULT: 0.90,
+    CROWD_GAIN_W: 0.14,
+    CROWD_GAIN_S: 0.34,
+
+    OPEN_LOSS: 1.35,
+    OPEN_MULT: 0.88,
 
     EQ_RATE: 0.11,
     EQ_MIN_DIFF: 6,
 
-    PUSH_P: 14,
+    PUSH_P: 16,
     PUSH_STEPS: 4,
 
-    RUPTURE_P_WATER: 110,
-    RUPTURE_P_STEAM: 80,
-    RUPTURE_LOSS: 42,
+    RUPTURE_P_WATER: 130,
+    RUPTURE_P_STEAM: 85,
+    RUPTURE_LOSS: 46,
 
-    FLASH_TO_STEAM_P: 170,
-    FLASH_CHANCE: 0.28,
+    FLASH_TO_STEAM_P: 190,
+    FLASH_CHANCE: 0.26,
 
     BURST_WAVES: 8,
     WAVE_LIFE: 12,
     WAVE_DECAY: 0.83,
-    WAVE_BREAK_MIN: 35,
+    WAVE_BREAK_MIN: 38,
 
     PRESSURIZER_ADD: 10,
     PRESSURIZER_RADIUS: 1,
 
-    PLATE_IDLE_ADD: 6,
-    PLATE_ACTIVE_ADD: 30,
+    PLATE_IDLE_ADD: 2,
+    PLATE_ACTIVE_ADD: 34,
     PLATE_RADIUS: 2,
-    PLATE_PULSE_CD: 18,
+    PLATE_PULSE_CD: 16,
 
-    TOOL_ADD: 80,
-    TOOL_SUB: 110,
+    TOOL_ADD: 90,
+    TOOL_SUB: 125,
     TOOL_SPREAD: 1,
 
     SAMPLE_MOD: 3,
-    CROWD_START_WATER: 6,
-    CROWD_START_STEAM: 5,
+
+    SEED_WATER_FULL_SEAL: 4,
+    SEED_WATER_CROWD_FULL: 8,
+    SEED_WATER_SEAL_STEAM: 3,
+    SEED_WATER_CROWD_STEAM: 6,
+
+    SEED_STEAM_SEAL: 3,
+    SEED_STEAM_CROWD: 5,
   });
 
   const DIR4 = Object.freeze([
@@ -86,7 +97,6 @@
   const clamp = (n, lo, hi) => (n < lo ? lo : n > hi ? hi : n);
 
   const hasDims = () => Number.isFinite(G.width) && Number.isFinite(G.height);
-
   const inBounds = (x, y) => {
     if (hasDims()) return x >= 0 && x < G.width && y >= 0 && y < G.height;
     const pm = G.pixelMap;
@@ -139,7 +149,6 @@
   const stateOf = (p) => defOf(p?.element)?.state || null;
 
   const prOf = (p) => (p && Number.isFinite(p.pr) ? p.pr : 0);
-
   const setPr = (p, v) => {
     if (!p) return;
     const nv = clamp(v, 0, CFG.MAX_P);
@@ -216,6 +225,15 @@
     return c;
   };
 
+  const steamNeighbors = (x, y) => {
+    let c = 0;
+    for (let i = 0; i < 8; i += 1) {
+      const n = getPx(x + DIR8[i][0], y + DIR8[i][1]);
+      if (n && n.element === "steam") c += 1;
+    }
+    return c;
+  };
+
   const sampleGate = (p) => {
     const t = Number.isFinite(G.pixelTicks) ? G.pixelTicks : 0;
     return ((t + p.x + p.y) % CFG.SAMPLE_MOD) === 0;
@@ -285,6 +303,7 @@
       const sx = bx + dx;
       const sy = by + dy;
       if (!inBounds(sx, sy) || !isEmptyAt(sx, sy, false)) continue;
+
       if (Math.random() < 0.35) createAt(ID.PRESSURE_DEBRIS, sx, sy, false);
       if (steamBias && Math.random() < 0.30) {
         const st = createAt("steam", sx, sy, false);
@@ -320,31 +339,62 @@
     return true;
   };
 
+  const convertIfNeeded = (p) => {
+    if (!p) return;
+    const pr = prOf(p);
+
+    if (p.element === "water" && pr >= CFG.CONVERT_P) {
+      changeTo(p, ID.PRESSURIZED_WATER);
+      return;
+    }
+
+    if (p.element === ID.PRESSURIZED_WATER && pr <= CFG.REVERT_P) {
+      changeTo(p, "water");
+      setPr(p, 0);
+    }
+  };
+
+  const canWaterBuildHere = (p, sealed, crowd, steamN) => {
+    if (steamN > 0 && sealed >= CFG.SEED_WATER_SEAL_STEAM && crowd >= CFG.SEED_WATER_CROWD_STEAM) return true;
+    if (sealed >= CFG.SEED_WATER_FULL_SEAL && crowd >= CFG.SEED_WATER_CROWD_FULL) return true;
+    return false;
+  };
+
+  const seedPressureIfNeeded = (p, kind) => {
+    if (prOf(p) > 0) return true;
+
+    const sealed = seal4(p.x, p.y);
+    if (sealed < 3) return false;
+    if (!sampleGate(p)) return false;
+
+    const crowd = crowd8(p.x, p.y);
+    if (kind === "steam") {
+      if (sealed < CFG.SEED_STEAM_SEAL || crowd < CFG.SEED_STEAM_CROWD) return false;
+      setPr(p, 14);
+      return true;
+    }
+
+    const steamN = steamNeighbors(p.x, p.y);
+    if (!canWaterBuildHere(p, sealed, crowd, steamN)) return false;
+    setPr(p, 10);
+    return true;
+  };
+
   const pressureCore = (p, kind) => {
     const cur = prOf(p);
     const sealed = seal4(p.x, p.y);
     const open = 4 - sealed;
 
-    const crowdNeed = kind === "steam" ? CFG.CROWD_START_STEAM : CFG.CROWD_START_WATER;
+    if (cur <= 0 && sealed < 3) return;
+    if (cur <= 0 && !seedPressureIfNeeded(p, kind)) return;
 
-    if (cur <= 0) {
-      if (sealed < 3) return;
-      if (!sampleGate(p)) return;
-
-      const crowd = crowd8(p.x, p.y);
-      if (crowd < crowdNeed) return;
-
-      const seed = kind === "steam" ? 12 : 8;
-      setPr(p, seed);
-      return;
-    }
-
-    let pr = cur;
+    let pr = prOf(p);
 
     if (!sampleGate(p)) {
       if (open > 0) {
         pr = pr * CFG.OPEN_MULT - CFG.OPEN_LOSS * open;
         setPr(p, pr);
+        if (kind === "water") convertIfNeeded(p);
       }
       return;
     }
@@ -353,10 +403,23 @@
 
     if (open > 0) {
       pr = pr * CFG.OPEN_MULT - CFG.OPEN_LOSS * open;
-    } else {
-      pr += kind === "steam" ? CFG.STEAM_BUILD : CFG.WATER_BUILD;
-      if (crowd > 4) pr += (crowd - 4) * (kind === "steam" ? CFG.CROWD_GAIN_S : CFG.CROWD_GAIN_W);
+      setPr(p, pr);
+      if (kind === "water") convertIfNeeded(p);
+      return;
     }
+
+    if (kind === "water") {
+      const steamN = steamNeighbors(p.x, p.y);
+      if (!canWaterBuildHere(p, sealed, crowd, steamN)) {
+        pr = pr * CFG.OPEN_MULT - 0.9;
+        setPr(p, pr);
+        convertIfNeeded(p);
+        return;
+      }
+    }
+
+    pr += kind === "steam" ? CFG.STEAM_BUILD : CFG.WATER_BUILD;
+    if (crowd > 4) pr += (crowd - 4) * (kind === "steam" ? CFG.CROWD_GAIN_S : CFG.CROWD_GAIN_W);
 
     setPr(p, pr);
 
@@ -364,6 +427,8 @@
       changeTo(p, "steam");
       return;
     }
+
+    if (kind === "water") convertIfNeeded(p);
 
     if (prOf(p) > 0) {
       equalize(p);
@@ -374,8 +439,8 @@
 
   const wrapTick = (name, before) => {
     const d = defOf(name);
-    if (!d || d.__psWrapped_v4) return;
-    d.__psWrapped_v4 = true;
+    if (!d || d.__psWrapped_v5) return;
+    d.__psWrapped_v5 = true;
 
     const orig = typeof d.tick === "function" ? d.tick : null;
     d.tick = function (p) {
@@ -428,6 +493,7 @@
 
     if (isFluidish(hit)) {
       addPr(hit, pow * 0.42);
+      if (hit.element === "water" && prOf(hit) >= CFG.CONVERT_P) changeTo(hit, ID.PRESSURIZED_WATER);
       if (Math.random() < 0.45) pushOut(hit);
       tryMoveTo(p, nx, ny);
       p.life = life;
@@ -452,8 +518,7 @@
     addPr(p, dv);
 
     if (dv > 0 && convertWater && p.element === "water") changeTo(p, ID.PRESSURIZED_WATER);
-
-    if (dv < 0 && p.element === ID.PRESSURIZED_WATER && prOf(p) <= 1) {
+    if (dv < 0 && p.element === ID.PRESSURIZED_WATER && prOf(p) <= CFG.REVERT_P) {
       changeTo(p, "water");
       setPr(p, 0);
     }
@@ -467,8 +532,7 @@
       addPr(n, dv * 0.35);
 
       if (dv > 0 && convertWater && n.element === "water") changeTo(n, ID.PRESSURIZED_WATER);
-
-      if (dv < 0 && n.element === ID.PRESSURIZED_WATER && prOf(n) <= 1) {
+      if (dv < 0 && n.element === ID.PRESSURIZED_WATER && prOf(n) <= CFG.REVERT_P) {
         changeTo(n, "water");
         setPr(n, 0);
       }
@@ -476,47 +540,40 @@
   };
 
   const armPick = () => {
-    G.__ps_pickArmed_v4 = !!(G.shiftDown || G.ctrlDown || G.metaDown);
+    G.__ps_pickArmed_v5 = !!(G.shiftDown || G.ctrlDown || G.metaDown || G.altDown);
   };
 
   const initMachine = (p, radius, addIdle, addActive) => {
-    if (p.__psInit_v4) return;
-    p.__psInit_v4 = true;
-    p.__psTarget_v4 = null;
-    p.__psArmed_v4 = !!G.__ps_pickArmed_v4;
-    p.__psRadius_v4 = radius;
-    p.__psAddIdle_v4 = addIdle;
-    p.__psAddActive_v4 = addActive ?? addIdle;
-    p.__psPulseCd_v4 = 0;
-    G.__ps_pickArmed_v4 = false;
+    if (p.__psInit_v5) return;
+    p.__psInit_v5 = true;
+    p.__psTarget_v5 = null;
+    p.__psArmed_v5 = !!G.__ps_pickArmed_v5;
+    p.__psRadius_v5 = radius;
+    p.__psAddIdle_v5 = addIdle;
+    p.__psAddActive_v5 = addActive ?? addIdle;
+    p.__psPulseCd_v5 = 0;
+    G.__ps_pickArmed_v5 = false;
   };
 
   const lockTargetIfArmed = (p) => {
-    if (!p.__psArmed_v4 || typeof p.__psTarget_v4 === "string") return;
-    const r = p.__psRadius_v4 | 0;
+    if (!p.__psArmed_v5 || typeof p.__psTarget_v5 === "string") return;
+    const r = p.__psRadius_v5 | 0;
     for (let dy = -r; dy <= r; dy += 1) {
       for (let dx = -r; dx <= r; dx += 1) {
         if (dx === 0 && dy === 0) continue;
         const n = getPx(p.x + dx, p.y + dy);
-        if (!n) continue;
-        if (!isFluidish(n)) continue;
+        if (!n || !isFluidish(n)) continue;
         if (n.element === ID.PRESSURIZER || n.element === ID.PRESSURE_PLATE) continue;
-        p.__psTarget_v4 = n.element;
+        p.__psTarget_v5 = n.element;
         return;
       }
     }
-  };
-
-  const anyPressingPlate = (p) => {
-    const above = getPx(p.x, p.y - 1);
-    if (!above) return false;
-    const st = stateOf(above);
-    return st === "solid" || st === "liquid";
+    p.__psTarget_v5 = null;
   };
 
   const machineAffect = (p, amt, convertWater) => {
-    const r = p.__psRadius_v4 | 0;
-    const t = typeof p.__psTarget_v4 === "string" ? p.__psTarget_v4 : null;
+    const r = p.__psRadius_v5 | 0;
+    const t = typeof p.__psTarget_v5 === "string" ? p.__psTarget_v5 : null;
 
     for (let dy = -r; dy <= r; dy += 1) {
       for (let dx = -r; dx <= r; dx += 1) {
@@ -531,11 +588,18 @@
     }
   };
 
-  const platePulse = (p, power) => {
-    if (p.__psPulseCd_v4 > 0) return;
-    p.__psPulseCd_v4 = CFG.PLATE_PULSE_CD;
+  const anyPressingPlate = (p) => {
+    const above = getPx(p.x, p.y - 1);
+    if (!above) return false;
+    const st = stateOf(above);
+    return st === "solid" || st === "liquid";
+  };
 
-    const pow = clamp(power, 20, 160);
+  const platePulse = (p, power) => {
+    if (p.__psPulseCd_v5 > 0) return;
+    p.__psPulseCd_v5 = CFG.PLATE_PULSE_CD;
+
+    const pow = clamp(power, 24, 180);
     for (let i = 0; i < 8; i += 1) {
       const d = DIR8[i];
       const sx = p.x + d[0];
@@ -548,7 +612,7 @@
   const pressurizerTick = (p) => {
     initMachine(p, CFG.PRESSURIZER_RADIUS, CFG.PRESSURIZER_ADD, CFG.PRESSURIZER_ADD);
     lockTargetIfArmed(p);
-    machineAffect(p, p.__psAddIdle_v4, true);
+    machineAffect(p, p.__psAddIdle_v5, true);
     if (isFn("doDefaults")) G.doDefaults(p);
   };
 
@@ -556,15 +620,16 @@
     initMachine(p, CFG.PLATE_RADIUS, CFG.PLATE_IDLE_ADD, CFG.PLATE_ACTIVE_ADD);
     lockTargetIfArmed(p);
 
-    if (p.__psPulseCd_v4 > 0) p.__psPulseCd_v4 -= 1;
+    if (p.__psPulseCd_v5 > 0) p.__psPulseCd_v5 -= 1;
 
     const active = anyPressingPlate(p);
-    const amt = active ? p.__psAddActive_v4 : p.__psAddIdle_v4;
+    const amt = active ? p.__psAddActive_v5 : p.__psAddIdle_v5;
 
     machineAffect(p, amt, true);
 
     if (active) {
-      const localPow = prOf(getPx(p.x, p.y - 1)) + amt * 2;
+      const src = getPx(p.x, p.y - 1);
+      const localPow = prOf(src) + amt * 3;
       platePulse(p, localPow);
     }
 
@@ -633,7 +698,7 @@
 
   elements[ID.TOOL_PRESSURIZE] = {
     color: ["#2cffcf", "#00ffa2", "#00c8ff"],
-    category: CFG.CAT,
+    category: "tools",
     tool: function (p) {
       applyTool(p, CFG.TOOL_ADD, CFG.TOOL_SPREAD, true);
     },
@@ -641,7 +706,7 @@
 
   elements[ID.TOOL_DEPRESSURIZE] = {
     color: ["#ffd6ff", "#ff9ee0", "#ff7ab3"],
-    category: CFG.CAT,
+    category: "tools",
     tool: function (p) {
       applyTool(p, -CFG.TOOL_SUB, CFG.TOOL_SPREAD, false);
     },
