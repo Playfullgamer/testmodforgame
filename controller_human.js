@@ -52,7 +52,7 @@
             var k = lowerKey(ev);
             CH.keys[k] = true;
             // prevent browser/game hotkeys from stealing controller actions while a controller human exists
-            if (CH.activeId !== null && (k === "q" || k === "z" || k === "x" || k === "g" || k === "b" || k === "n" || k === "u")) {
+            if (CH.activeId !== null && (k === "q" || k === "z" || k === "x" || k === "g" || k === "b" || k === "n" || k === "u" || k === "c" || k === "e" || k === "r" || k === "f")) {
                 if (ev.preventDefault) { ev.preventDefault(); }
             }
         });
@@ -274,6 +274,12 @@
         if (typeof body.oxygen !== "number") { body.oxygen = 100; }
         if (typeof body.hunger !== "number") { body.hunger = 0; }
         if (typeof body.jumpCd !== "number") { body.jumpCd = 0; }
+        if (typeof body.jumpFuel !== "number") { body.jumpFuel = 0; }
+        if (typeof body.airJumpUsed !== "boolean") { body.airJumpUsed = false; }
+        if (typeof body.coyote !== "number") { body.coyote = 0; }
+        if (typeof body.dashCd !== "number") { body.dashCd = 0; }
+        if (typeof body.attackCd !== "number") { body.attackCd = 0; }
+        if (typeof body.healCd !== "number") { body.healCd = 0; }
         if (typeof body.wanderDir !== "number") { body.wanderDir = body.dir || 1; }
         if (typeof body.wanderTimer !== "number") { body.wanderTimer = 0; }
         if (typeof body.mode !== "number") { body.mode = 1; } // 0 manual, 1 assist, 2 auto
@@ -487,169 +493,372 @@
     }
 
     function manualIntent() {
-        var left = !!CH.keys["a"];
-        var right = !!CH.keys["d"];
-        var dx = 0;
-        if (left && !right) { dx = -1; }
-        else if (right && !left) { dx = 1; }
-        return {
-            dx: dx,
-            jump: !!CH.edges["w"],
-            crouch: !!CH.keys["s"],
-            sprint: !!CH.keys["shift"]
+    var left = !!CH.keys["a"];
+    var right = !!CH.keys["d"];
+    var dx = 0;
+    if (left && !right) { dx = -1; }
+    else if (right && !left) { dx = 1; }
+    return {
+        dx: dx,
+        jump: !!CH.edges["w"],
+        holdJump: !!CH.keys["w"],
+        crouch: !!CH.keys["s"],
+        sprint: !!CH.keys["shift"]
+    };
+}
+
+function aiIntent(body, head, assistMode) {
+    var intent = { dx: 0, jump: false, holdJump: false, crouch: false, sprint: false };
+    var hx = head ? head.x : body.x;
+    var hy = head ? head.y : body.y - 1;
+
+    var awayScore = 0;
+    var foodScore = 0;
+    var bestHazardDist = 999;
+
+    for (var dx = -5; dx <= 5; dx++) {
+        for (var dy = -4; dy <= 3; dy++) {
+            var p = getPixelSafe(hx + dx, hy + dy);
+            if (!p || isOurPart(p)) { continue; }
+            var dist = Math.abs(dx) + Math.abs(dy);
+            if (dist === 0) { dist = 1; }
+
+            if (isHazardPixel(p)) {
+                awayScore += (-dx) / dist;
+                if (dist < bestHazardDist) { bestHazardDist = dist; }
+                if (dy >= 0 && dist <= 2) {
+                    intent.jump = true;
+                    intent.holdJump = true;
+                }
+            }
+
+            if (body.hunger > 35 && isFoodPixel(p)) {
+                foodScore += (dx) / dist;
+            }
+        }
+    }
+
+    var desiredDx = 0;
+    if (bestHazardDist <= 4 && awayScore !== 0) {
+        desiredDx = awayScore > 0 ? 1 : -1;
+        intent.sprint = body.stamina > 25;
+        if (bestHazardDist <= 2 && body.dashCd <= 0 && body.stamina > 25) {
+            if (Math.random() < 0.35) { intent.dash = true; }
+        }
+    }
+    else if (body.hunger > 35 && foodScore !== 0) {
+        desiredDx = foodScore > 0 ? 1 : -1;
+    }
+    else {
+        body.wanderTimer -= 1;
+        if (body.wanderTimer <= 0) {
+            body.wanderTimer = 20 + Math.floor(Math.random() * 60);
+            if (Math.random() < 0.2) { body.wanderDir = 0; }
+            else { body.wanderDir = Math.random() < 0.5 ? -1 : 1; }
+        }
+        desiredDx = body.wanderDir || 0;
+        if (Math.random() < 0.01) {
+            intent.jump = true;
+            intent.holdJump = true;
+        }
+    }
+
+    intent.dx = desiredDx;
+
+    if (assistMode) {
+        if (bestHazardDist > 4 && body.hunger <= 60) {
+            intent.dx = 0;
+            intent.jump = false;
+            intent.holdJump = false;
+            intent.sprint = false;
+            intent.dash = false;
+        }
+    }
+
+    if (body.hp < 45 && body.healCd <= 0 && body.stamina > 30 && body.hunger < 75 && Math.random() < 0.08) {
+        intent.heal = true;
+    }
+
+    return intent;
+}
+
+function mergeIntents(manual, auto, mode) {
+    if (mode === 2) {
+        return auto;
+    }
+    if (mode === 1) {
+        var out = {
+            dx: manual.dx,
+            jump: manual.jump,
+            holdJump: manual.holdJump,
+            crouch: manual.crouch,
+            sprint: manual.sprint,
+            dash: !!manual.dash,
+            heal: !!manual.heal
         };
+        if (auto.dx && !manual.dx) { out.dx = auto.dx; }
+        if (auto.jump) { out.jump = true; }
+        if (auto.holdJump) { out.holdJump = true; }
+        if (auto.sprint && !manual.sprint) { out.sprint = true; }
+        if (auto.dash && !manual.dash) { out.dash = true; }
+        if (auto.heal && !manual.heal) { out.heal = true; }
+        return out;
+    }
+    return manual;
+}
+
+function jumpThrust(body, head, dx) {
+    var dir = dx || 0;
+    if (dir) {
+        if (tryMovePair(body, head, body.x + dir, body.y - 1)) { return true; }
+    }
+    if (tryMovePair(body, head, body.x, body.y - 1)) { return true; }
+    if (dir) {
+        if (tryMovePair(body, head, body.x + dir, body.y)) { return true; }
+    }
+    return false;
+}
+
+function beginJump(body, head, dx, sprinting) {
+    var lifts = sprinting ? 2 : 1;
+    var moved = 0;
+    for (var i=0; i<lifts; i++) {
+        if (jumpThrust(body, head, dx)) { moved++; }
+        else { break; }
+    }
+    if (!moved) { return false; }
+    body.jumpFuel = sprinting ? 4 : 3;
+    return true;
+}
+
+function sustainJump(body, head, dx) {
+    if (!body.jumpFuel || body.jumpFuel <= 0) { return false; }
+    if (!jumpThrust(body, head, dx)) {
+        body.jumpFuel = 0;
+        return false;
+    }
+    body.jumpFuel -= 1;
+    if (body.jumpFuel < 0) { body.jumpFuel = 0; }
+    return true;
+}
+
+function pushTarget(p, dir, power) {
+    if (!p || !dir) { return false; }
+    if (!power) { power = 1; }
+    var moved = false;
+    for (var step = 0; step < power; step++) {
+        if (typeof isEmpty === "function" && isEmpty(p.x + dir, p.y, true)) {
+            movePixel(p, p.x + dir, p.y);
+            moved = true;
+            continue;
+        }
+        if (typeof isEmpty === "function" && isEmpty(p.x + dir, p.y - 1, true)) {
+            movePixel(p, p.x + dir, p.y - 1);
+            moved = true;
+            continue;
+        }
+        break;
+    }
+    return moved;
+}
+
+function doKick(body, head) {
+    if (body.attackCd > 0 || body.stamina < 4) { return false; }
+    var dir = body.dir || 1;
+    var hits = [
+        getPixelSafe(body.x + dir, body.y - 1),
+        getPixelSafe(body.x + dir*2, body.y - 1),
+        getPixelSafe(body.x + dir, body.y),
+        getPixelSafe(body.x + dir*2, body.y)
+    ];
+    for (var i=0; i<hits.length; i++) {
+        var p = hits[i];
+        if (!p || isOurPart(p)) { continue; }
+        pushTarget(p, dir, 2);
+        if (isOurBody(p)) {
+            hurtBody(p, 10, linkedHead(p));
+        }
+        else if (isOurHead(p)) {
+            var b = linkedBody(p);
+            if (b) { hurtBody(b, 12, p); }
+        }
+        else if (isHazardPixel(p)) {
+            hurtBody(body, 0.7, head);
+        }
+        body.attackCd = 6;
+        body.stamina -= 6;
+        if (body.stamina < 0) { body.stamina = 0; }
+        return true;
+    }
+    return false;
+}
+
+function doDash(body, head) {
+    if (body.dashCd > 0 || body.stamina < 14) { return false; }
+    var dir = body.dir || 1;
+    var moved = false;
+    for (var i=0; i<4; i++) {
+        if (stepMove(body, head, dir)) {
+            moved = true;
+            continue;
+        }
+        if (tryMovePair(body, head, body.x + dir, body.y - 1)) {
+            moved = true;
+            continue;
+        }
+        break;
     }
 
-    function aiIntent(body, head, assistMode) {
-        var intent = { dx: 0, jump: false, crouch: false, sprint: false };
-        var hx = head ? head.x : body.x;
-        var hy = head ? head.y : body.y - 1;
-
-        var awayScore = 0;
-        var foodScore = 0;
-        var bestHazardDist = 999;
-
-        for (var dx = -5; dx <= 5; dx++) {
-            for (var dy = -4; dy <= 3; dy++) {
-                var p = getPixelSafe(hx + dx, hy + dy);
-                if (!p || isOurPart(p)) { continue; }
-                var dist = Math.abs(dx) + Math.abs(dy);
-                if (dist === 0) { dist = 1; }
-
-                if (isHazardPixel(p)) {
-                    awayScore += (-dx) / dist;
-                    if (dist < bestHazardDist) { bestHazardDist = dist; }
-                    if (dy >= 0 && dist <= 2) {
-                        intent.jump = true;
-                    }
-                }
-
-                if (body.hunger > 35 && isFoodPixel(p)) {
-                    foodScore += (dx) / dist;
-                }
-            }
+    var p = getPixelSafe(body.x + dir, body.y - 1) || getPixelSafe(body.x + dir, body.y);
+    if (p && !isOurPart(p)) {
+        pushTarget(p, dir, 2);
+        if (isOurBody(p)) {
+            hurtBody(p, 5, linkedHead(p));
         }
-
-        var desiredDx = 0;
-        if (bestHazardDist <= 4 && awayScore !== 0) {
-            desiredDx = awayScore > 0 ? 1 : -1;
-            intent.sprint = body.stamina > 25;
+        else if (isOurHead(p)) {
+            var b2 = linkedBody(p);
+            if (b2) { hurtBody(b2, 7, p); }
         }
-        else if (body.hunger > 35 && foodScore !== 0) {
-            desiredDx = foodScore > 0 ? 1 : -1;
-        }
-        else {
-            body.wanderTimer -= 1;
-            if (body.wanderTimer <= 0) {
-                body.wanderTimer = 20 + Math.floor(Math.random() * 60);
-                if (Math.random() < 0.2) { body.wanderDir = 0; }
-                else { body.wanderDir = Math.random() < 0.5 ? -1 : 1; }
-            }
-            desiredDx = body.wanderDir || 0;
-            if (Math.random() < 0.01) { intent.jump = true; }
-        }
-
-        intent.dx = desiredDx;
-
-        if (assistMode) {
-            // In assist mode we only auto-steer for danger; otherwise manual wins.
-            if (bestHazardDist > 4 && body.hunger <= 60) {
-                intent.dx = 0;
-                intent.jump = false;
-                intent.sprint = false;
-            }
-        }
-
-        return intent;
     }
 
-    function mergeIntents(manual, auto, mode) {
-        if (mode === 2) {
-            return auto;
-        }
-        if (mode === 1) {
-            var out = {
-                dx: manual.dx,
-                jump: manual.jump,
-                crouch: manual.crouch,
-                sprint: manual.sprint
-            };
-            if (auto.dx && !manual.dx) { out.dx = auto.dx; }
-            if (auto.jump) { out.jump = true; }
-            if (auto.sprint && !manual.sprint) { out.sprint = true; }
-            return out;
-        }
-        return manual;
+    body.dashCd = 18;
+    body.jumpFuel = 0;
+    body.stamina -= moved ? 12 : 8;
+    if (body.stamina < 0) { body.stamina = 0; }
+    return moved;
+}
+
+function doHeal(body, head) {
+    if (body.healCd > 0) { return false; }
+    if (body.hp >= 99) { return false; }
+    if (body.stamina < 20) { return false; }
+    if (body.hunger > 82) { return false; }
+    if (body.oxygen < 20) { return false; }
+
+    body.hp += 14;
+    if (body.hp > 100) { body.hp = 100; }
+    body.stamina -= 18;
+    if (body.stamina < 0) { body.stamina = 0; }
+    body.hunger += 8;
+    if (body.hunger > 100) { body.hunger = 100; }
+    body.panic -= 2;
+    if (body.panic < 0) { body.panic = 0; }
+    body.healCd = 90;
+
+    if (head && typeof isEmpty === "function" && isEmpty(head.x, head.y - 1, true) && Math.random() < 0.35) {
+        createPixel("steam", head.x, head.y - 1);
+    }
+    return true;
+}
+
+function applyMovementAndActions(body, head, intent, isControlled) {
+    if (!body || body.dead) { return; }
+
+    if (intent.dx) { body.dir = intent.dx > 0 ? 1 : -1; }
+    if (typeof body.jumpCd !== "number") { body.jumpCd = 0; }
+    if (body.jumpCd > 0) { body.jumpCd--; }
+    if (typeof body.attackCd !== "number") { body.attackCd = 0; }
+    if (body.attackCd > 0) { body.attackCd--; }
+    if (typeof body.dashCd !== "number") { body.dashCd = 0; }
+    if (body.dashCd > 0) { body.dashCd--; }
+    if (typeof body.healCd !== "number") { body.healCd = 0; }
+    if (body.healCd > 0) { body.healCd--; }
+
+    var grounded = onGround(body);
+    if (grounded) {
+        body.airJumpUsed = false;
+        body.coyote = 2;
+    }
+    else if (body.coyote > 0) {
+        body.coyote--;
     }
 
-    function applyMovementAndActions(body, head, intent, isControlled) {
-        if (!body || body.dead) { return; }
+    var sprinting = !!intent.sprint && body.stamina > 8;
+    var moveSteps = sprinting ? 2 : 1;
+    var moved = false;
 
-        if (intent.dx) { body.dir = intent.dx > 0 ? 1 : -1; }
-        if (typeof body.jumpCd !== "number") { body.jumpCd = 0; }
-        if (body.jumpCd > 0) { body.jumpCd--; }
-
-        var sprinting = !!intent.sprint && body.stamina > 8;
-        var moveSteps = sprinting ? 2 : 1;
-        var moved = false;
-
-        if (intent.jump && body.jumpCd <= 0) {
-            var jdx = intent.dx || 0;
-            if (jumpMove(body, head, jdx)) {
-                body.jumpCd = 5;
+    if (intent.jump) {
+        var canGroundJump = grounded || (body.coyote > 0);
+        if (canGroundJump && body.jumpCd <= 0) {
+            if (beginJump(body, head, intent.dx || 0, sprinting)) {
+                body.jumpCd = 3;
+                body.coyote = 0;
                 body.stamina -= sprinting ? 8 : 5;
                 moved = true;
             }
         }
-
-        if (intent.dx) {
-            for (var i=0; i<moveSteps; i++) {
-                if (stepMove(body, head, intent.dx)) {
-                    moved = true;
-                    body.stamina -= sprinting ? 1.2 : 0.5;
-                }
-                else {
-                    if (intent.crouch && typeof tryMovePair === "function") {
-                        // no-op crouch placeholder for future crawling
-                    }
-                    break;
-                }
-            }
-        }
-
-        if (!moved) {
-            body.stamina += 0.35;
-        }
-        else {
-            body.stamina += 0.05;
-        }
-
-        if (body.stamina > 100) { body.stamina = 100; }
-        if (body.stamina < 0) { body.stamina = 0; }
-
-        if (body.panic > 0) {
-            body.panic -= 0.02;
-            if (body.panic < 0) { body.panic = 0; }
-        }
-
-        if (isControlled) {
-            if (CH.edges["q"]) {
-                if (body.held) { doPlace(body, head, false); }
-                else { doPickup(body); }
-            }
-            if (CH.edges["z"]) {
-                doPlace(body, head, false);
-            }
-            if (CH.edges["g"]) {
-                doPlace(body, head, true);
-            }
-            if (CH.edges["x"]) {
-                doPunch(body, head);
+        else if (!grounded && !body.airJumpUsed && body.stamina > 10) {
+            if (beginJump(body, head, intent.dx || 0, true)) {
+                body.airJumpUsed = true;
+                body.jumpCd = 4;
+                body.stamina -= 10;
+                moved = true;
             }
         }
     }
 
-    function collectBodies() {
+    if (intent.holdJump && body.jumpFuel > 0 && !intent.crouch) {
+        if (sustainJump(body, head, intent.dx || 0)) {
+            body.stamina -= 1.4;
+            moved = true;
+        }
+    }
+    else if (!intent.holdJump && body.jumpFuel > 0) {
+        body.jumpFuel = 0;
+    }
+
+    if (intent.dx) {
+        for (var i=0; i<moveSteps; i++) {
+            if (stepMove(body, head, intent.dx)) {
+                moved = true;
+                body.stamina -= sprinting ? 1.2 : 0.5;
+            }
+            else {
+                if (intent.crouch && typeof tryMovePair === "function") {
+                    if (tryMovePair(body, head, body.x + intent.dx, body.y + 1)) {
+                        moved = true;
+                        body.stamina -= 0.4;
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    if (isControlled) {
+        if (CH.edges["q"]) {
+            if (body.held) { doPlace(body, head, false); }
+            else { doPickup(body); }
+        }
+        if (CH.edges["z"]) { doPlace(body, head, false); }
+        if (CH.edges["g"]) { doPlace(body, head, true); }
+        if (CH.edges["x"]) { doPunch(body, head); }
+        if (CH.edges["e"]) { doKick(body, head); }
+        if (CH.edges["c"]) {
+            if (doDash(body, head)) { moved = true; }
+        }
+        if (CH.edges["r"]) { doHeal(body, head); }
+    }
+    else {
+        if (intent.dash) {
+            if (doDash(body, head)) { moved = true; }
+        }
+        if (intent.heal) { doHeal(body, head); }
+    }
+
+    if (!moved) { body.stamina += 0.35; }
+    else { body.stamina += 0.05; }
+
+    if (body.stamina > 100) { body.stamina = 100; }
+    if (body.stamina < 0) { body.stamina = 0; }
+
+    if (body.panic > 0) {
+        body.panic -= 0.02;
+        if (body.panic < 0) { body.panic = 0; }
+    }
+}
+
+function collectBodies() {
         var out = [];
         if (typeof pixelMap === "undefined") { return out; }
         for (var x = 0; x < pixelMap.length; x++) {
@@ -706,11 +915,27 @@
         say("[Controller Human] #" + body.cid + " -> " + modeName(body.mode));
     }
 
+function showActiveStatus() {
+    var body = findBodyById(CH.activeId);
+    if (!body) {
+        say("[Controller Human] No active human.");
+        return;
+    }
+    var held = body.held ? body.held : "none";
+    say("[Controller Human] #" + body.cid +
+        " | HP " + Math.round(body.hp) +
+        " | STA " + Math.round(body.stamina) +
+        " | Hunger " + Math.round(body.hunger) +
+        " | O2 " + Math.round(body.oxygen) +
+        " | Mode " + modeName(body.mode) +
+        " | Held " + held);
+}
+
     function showHelp() {
         var pt = (typeof pixelTicks !== "undefined") ? pixelTicks : 0;
         if (pt - CH.lastHelpTick < 10) { return; }
         CH.lastHelpTick = pt;
-        say("[Controller Human] WASD move/jump/crouch, Shift sprint, Q pick/drop, Z place, G throw, X punch, B cycle human, N mode (Manual/Assist/Auto)");
+        say("[Controller Human] WASD move (hold W for higher jump + double jump), Shift sprint, C dash, X punch, E kick, Q/Z/G pick-place-throw, R heal, F stats, B cycle, N mode");
     }
 
     if (typeof runEveryTick === "function") {
@@ -728,6 +953,7 @@
             if (CH.edges["b"]) { cycleActiveBody(); }
             if (CH.edges["n"]) { cycleMode(); }
             if (CH.edges["u"]) { showHelp(); }
+            if (CH.edges["f"]) { showActiveStatus(); }
 
             CH.prevKeys = {};
             for (k in CH.keys) {
@@ -765,7 +991,7 @@
         category: "life",
         state: "solid",
         density: 1200,
-        desc: "Spawns a keyboard-controllable human. B cycles active human, N changes AI mode, U shows controls.",
+        desc: "Spawns a keyboard-controllable human with high jump, double jump, dash, kick, healing, and AI assist. U shows controls.",
         tick: function(pixel) {
             var madeHead = false;
             var head = null;
@@ -804,6 +1030,12 @@
             body.hunger = 0;
             body.oxygen = 100;
             body.jumpCd = 0;
+            body.jumpFuel = 0;
+            body.airJumpUsed = false;
+            body.coyote = 0;
+            body.dashCd = 0;
+            body.attackCd = 0;
+            body.healCd = 0;
             body.held = null;
             body.dir = Math.random() < 0.5 ? -1 : 1;
             body.wanderDir = body.dir;
@@ -846,6 +1078,12 @@
             oxygen: 100,
             hunger: 0,
             jumpCd: 0,
+            jumpFuel: 0,
+            airJumpUsed: false,
+            coyote: 0,
+            dashCd: 0,
+            attackCd: 0,
+            healCd: 0,
             mode: 1,
             held: null,
             cid: 0,
@@ -903,7 +1141,7 @@
                     intent = aiIntent(pixel, head, true);
                 }
                 else {
-                    intent = {dx:0,jump:false,crouch:false,sprint:false};
+                    intent = {dx:0,jump:false,holdJump:false,crouch:false,sprint:false,dash:false,heal:false};
                 }
             }
 
